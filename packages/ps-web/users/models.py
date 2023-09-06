@@ -1,5 +1,7 @@
 from django.db import models
 import uuid
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db.models import JSONField
@@ -47,13 +49,71 @@ class Membership(models.Model):
         else:
             return ':' + self.user.username
 
+class Budget(models.Model):
+    id = models.UUIDField(default=uuid.uuid4,
+                          unique=True,
+                          primary_key=True,
+                          editable=False)
+    content_type = models.ForeignKey(ContentType,on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey('content_type', 'object_id')
+    creation_date = models.DateTimeField(auto_now_add=True)
+    modified_date = models.DateTimeField(auto_now=True)
 
-class OrgAccount(models.Model):
+    max_allowance = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    monthly_allowance = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    balance = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    fytd_accrued_cost = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
+    most_recent_charge_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)  # from Cost Explorer
+    most_recent_credit_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)  # from utils.reconcile
+    most_recent_recon_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)  # from utils.reconcile
+    max_hrly = models.FloatField(default=0.0000001)
+    cur_hrly = models.FloatField(default=0.0000001)
+    min_hrly = models.FloatField(default=0.0000001)
+    fc_min_hourly = models.JSONField(default=dict)  # current forecast
+    fc_min_daily = models.JSONField(default=dict)  # current forecast
+    fc_min_monthly = models.JSONField(default=dict)  # current forecast
+    fc_cur_hourly = models.JSONField(default=dict)  # current forecast
+    fc_cur_daily = models.JSONField(default=dict)  # current forecast
+    fc_cur_monthly = models.JSONField(default=dict)  # current forecast
+    fc_max_hourly = models.JSONField(default=dict)  # current forecast
+    fc_max_daily = models.JSONField(default=dict)  # current forecast
+    fc_max_monthly = models.JSONField(default=dict)  # current forecast
+
+class ASGNodeLimits(models.Model):
+    '''
+    This is a wrapper for the Auto Scaling Group node limits
+    '''
     # Validators limits:
     MIN_NODES = 0
-    DEF_NODES = 2
     DEF_ADMIN_MAX_NODES = 10 # overrideable up to ABS_MAX_NODES
     ABS_MAX_NODES = 1000 # can be changed via ecs task template
+
+    content_type = models.ForeignKey(ContentType,on_delete=models.CASCADE)
+    object_id = models.UUIDField(default=uuid.uuid4,
+                          unique=True,
+                          primary_key=True,
+                          editable=False)
+    content_object = GenericForeignKey('content_type', 'object_id')
+    num = models.IntegerField(  editable=True,  # this field can be edited in admin panel by user with admin privileges
+                                default=MIN_NODES,
+                                validators=[
+                                    MinValueValidator(MIN_NODES),
+                                    MaxValueValidator(ABS_MAX_NODES)])
+    min = models.IntegerField(  editable=True,   # this field can be edited in admin panel by user with admin privileges
+                                default=MIN_NODES,
+                                validators=[
+                                    MinValueValidator(MIN_NODES),
+                                    MaxValueValidator(ABS_MAX_NODES)])
+    max = models.IntegerField(  editable=True,   # this field is actual cluster state
+                                default=DEF_ADMIN_MAX_NODES,
+                                validators=[
+                                    MinValueValidator(MIN_NODES),
+                                    MaxValueValidator(ABS_MAX_NODES)])
+
+class OrgAccount(models.Model):
+    def __str__(self):
+        return str(self.name)
 
     id = models.UUIDField(default=uuid.uuid4,
                           unique=True,
@@ -72,95 +132,37 @@ class OrgAccount(models.Model):
                                              blank=False,
                                              null=False)
     email = models.EmailField(default='support@mail.slideruleearth.io')
-    max_allowance = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
-    monthly_allowance = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
-    balance = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
-    fytd_accrued_cost = models.DecimalField(max_digits=8, decimal_places=2, default=0.0)
-    creation_date = models.DateTimeField(auto_now_add=True)
-    modified_date = models.DateTimeField(auto_now=True)
-
-    node_mgr_fixed_cost = models.FloatField(default=0.153)  # Overhead==> (monitor is c6a.large, orchestrator is c6a.large;  c6a.large = 0.0765/hour)
-    node_fixed_cost = models.FloatField(default=0.226)  # Per Node (r5a.xlarge = 0.226)
-    desired_num_nodes = models.IntegerField(editable=True,  # this field can be edited in admin panel by user with admin privileges
-                                            default=MIN_NODES,
-                                            validators=[
-                                                MinValueValidator(MIN_NODES),
-                                                MaxValueValidator(ABS_MAX_NODES)])
-    min_node_cap = models.IntegerField( editable=True,   # this field can be edited in admin panel by user with admin privileges
-                                        default=MIN_NODES,
-                                        validators=[
-                                            MinValueValidator(MIN_NODES),
-                                            MaxValueValidator(ABS_MAX_NODES)])
-    max_node_cap = models.IntegerField( editable=True,   # this field is actual cluster state
-                                        default=DEF_ADMIN_MAX_NODES,
-                                        validators=[
-                                            MinValueValidator(MIN_NODES),
-                                            MaxValueValidator(ABS_MAX_NODES)])
-    max_hrly = models.FloatField(default=0.0000001)
-    cur_hrly = models.FloatField(default=0.0000001)
-    min_hrly = models.FloatField(default=0.0000001)
-    min_ddt = models.DateTimeField(editable=True,default=django.utils.timezone.now)
-    cur_ddt = models.DateTimeField(editable=True,default=django.utils.timezone.now)
-    max_ddt = models.DateTimeField(editable=True,default=django.utils.timezone.now)
-
-    most_recent_charge_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)  # from Cost Explorer
-    most_recent_credit_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)  # from utils.reconcile
-    most_recent_recon_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)  # from utils.reconcile
-
-
-    fc_min_hourly = models.JSONField(default=dict)  # current forecast
-    fc_min_daily = models.JSONField(default=dict)  # current forecast
-    fc_min_monthly = models.JSONField(default=dict)  # current forecast
-
-    fc_cur_hourly = models.JSONField(default=dict)  # current forecast
-    fc_cur_daily = models.JSONField(default=dict)  # current forecast
-    fc_cur_monthly = models.JSONField(default=dict)  # current forecast
-
-    fc_max_hourly = models.JSONField(default=dict)  # current forecast
-    fc_max_daily = models.JSONField(default=dict)  # current forecast
-    fc_max_monthly = models.JSONField(default=dict)  # current forecast
-    version = models.CharField( editable=True,   # includes the v if is a release like 'v1.4.1'
-                                max_length=16, 
-                                blank=False,
-                                null=False,
-                                default="latest") # version of terraform files
     mfa_code = models.CharField(editable=True,
                                         max_length=16, 
                                         blank=False,
                                         null=False,
                                         default="sliderule_1492") # mfa-code entered
-    # this is an editable limit using admin privileges
-    admin_max_node_cap = models.IntegerField(editable=True,   # this field can be edited in admin panel by user with admin privileges
-                                                default=DEF_ADMIN_MAX_NODES,
-                                                validators=[
-                                                    MinValueValidator(MIN_NODES),
-                                                    MaxValueValidator(ABS_MAX_NODES)])
-    tokens = models.JSONField(default=dict)
-    tokens_time =  models.DateTimeField(default=django.utils.timezone.now)
-    time_to_live_in_mins = models.IntegerField(editable=True,default=60,validators=[MinValueValidator(15)]) 
-    allow_deploy_by_token = models.BooleanField(default=True)
-    destroy_when_no_nodes = models.BooleanField(default=True)
-    is_public = models.BooleanField(editable=True,default=False)
-    pcqr_display_age_in_hours = models.IntegerField(editable=True, default=72)
-    pcqr_retention_age_in_days = models.IntegerField(editable=True, default=14)
-    loop_count = models.BigIntegerField(editable=True,default=0)
-    num_owner_ps_cmd = models.BigIntegerField(editable=True,default=0)
-    num_ps_cmd = models.BigIntegerField(editable=True,default=0)
-    num_ps_cmd_successful = models.BigIntegerField(editable=True,default=0)
-    num_onn = models.BigIntegerField(editable=True,default=0)
-    provisioning_suspended = models.BooleanField(editable=True,default=False)
-    num_setup_cmd = models.BigIntegerField(editable=True,default=0)
-    num_setup_cmd_successful = models.BigIntegerField(editable=True,default=0)
+    budget = GenericRelation(Budget, related_query_name='org_budget', content_type_field='content_type', object_id_field='object_id', unique=True)
+    # this is a summation of all the clusters auto scaling group node limits
+    sum_asg = GenericRelation(ASGNodeLimits, related_query_name='sum_asg', content_type_field='content_type', object_id_field='object_id', unique=True)
+    creation_date = models.DateTimeField(auto_now_add=True)
+    modified_date = models.DateTimeField(auto_now=True)
 
+class NodeGroup(models.Model): 
     def __str__(self):
-        return str(self.name)
+        return str(self.org.name) + "-" + str(self.name)
 
+    id = models.UUIDField(default=uuid.uuid4,
+                          unique=True,
+                          primary_key=True,
+                          editable=False)
 
-class Cluster(models.Model):
-    org = models.OneToOneField(OrgAccount,
-                               on_delete=models.CASCADE,
-                               primary_key=True,
-                               editable=False)
+    name = models.CharField(max_length=200,
+                            default='compute',
+                            blank=False,
+                            null=False)
+    org = models.ForeignKey(OrgAccount, 
+                            on_delete=models.CASCADE,
+                            null=False,
+                            blank=False)
+    node_mgr_fixed_cost = models.FloatField(editable=True,default=0.145,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for monitor and ilb")  # Overhead==> (monitor is c7g.large, ilb is c7g.large; .0725)
+    node_fixed_cost = models.FloatField(default=0.2016,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for node")  # Per Node (r6g.xlarge = 0.226)
+
     creation_date = models.DateTimeField(auto_now_add=True)
     modified_date = models.DateTimeField(auto_now=True)
     mgr_ip_address = models.GenericIPAddressField(default='0.0.0.0', editable=True)
@@ -177,21 +179,7 @@ class Cluster(models.Model):
                                       null=False,
                                       editable=True)
 
-    connection_status = models.CharField(max_length=64,
-                                      default='unknown',
-                                      blank=False,
-                                      null=False,
-                                      editable=True)
-
-    version_query_log = models.TextField(editable=False, default="")
     cnnro_ids = JSONField(null=True, blank=True)  # This will store a list of UUIDs
-    cur_nodes = models.IntegerField(default=0,editable=False)  # actual value seen from boto3
-    cur_min_node_cap = models.IntegerField( editable=True,   # this field is actual cluster state
-                                            blank=True,
-                                            null=True)
-    cur_max_node_cap = models.IntegerField( editable=True,   # this field is actual cluster state
-                                            blank=True,
-                                            null=True)
     cur_version = models.CharField( editable=True,   # includes the v if is a release like 'v1.4.1'
                                     max_length=16, 
                                     blank=True,
@@ -204,6 +192,45 @@ class Cluster(models.Model):
                                         blank=True,
                                         null=True) # current version of sw terraform files
     prov_env_is_public = models.BooleanField(editable=True,default=False)
+    creation_date = models.DateTimeField(auto_now_add=True)
+    modified_date = models.DateTimeField(auto_now=True)
+
+    cur_asg = GenericRelation(ASGNodeLimits, related_query_name='cluster_cur_asg', content_type_field='content_type', object_id_field='object_id', unique=True)
+    cfg_asg = GenericRelation(ASGNodeLimits, related_query_name='cluster_cfg_asg', content_type_field='content_type', object_id_field='object_id', unique=True, editable=True)
+    budget = GenericRelation(Budget, related_query_name='cluster_budget', content_type_field='content_type', object_id_field='object_id', unique=True)
+
+
+    ## these were migrated from v3 OrgAccount
+    min_ddt = models.DateTimeField(editable=True,default=django.utils.timezone.now)
+    cur_ddt = models.DateTimeField(editable=True,default=django.utils.timezone.now)
+    max_ddt = models.DateTimeField(editable=True,default=django.utils.timezone.now)
+    version = models.CharField( editable=True,   # includes the v if is a release like 'v1.4.1'
+                                max_length=16, 
+                                blank=False,
+                                null=False,
+                                default="latest") # version of terraform files
+    # this is an editable limit using admin privileges
+    admin_max_node_cap = models.IntegerField(editable=True,   # this field can be edited in admin panel by user with admin privileges
+                                                default=ASGNodeLimits.DEF_ADMIN_MAX_NODES,
+                                                validators=[
+                                                    MinValueValidator(ASGNodeLimits.MIN_NODES),
+                                                    MaxValueValidator(ASGNodeLimits.ABS_MAX_NODES)])
+    time_to_live_in_mins = models.IntegerField(editable=True,default=60,validators=[MinValueValidator(15)]) 
+    allow_deploy_by_token = models.BooleanField(default=True)
+    destroy_when_no_nodes = models.BooleanField(default=True)
+    is_public = models.BooleanField(editable=True,default=False)
+    pcqr_display_age_in_hours = models.IntegerField(editable=True, default=72)
+    pcqr_retention_age_in_days = models.IntegerField(editable=True, default=14)
+    loop_count = models.BigIntegerField(editable=True,default=0)
+    num_owner_ps_cmd = models.BigIntegerField(editable=True,default=0)
+    num_ps_cmd = models.BigIntegerField(editable=True,default=0)
+    num_ps_cmd_successful = models.BigIntegerField(editable=True,default=0)
+    num_onn = models.BigIntegerField(editable=True,default=0)
+    provisioning_suspended = models.BooleanField(editable=True,default=False)
+    num_setup_cmd = models.BigIntegerField(editable=True,default=0)
+    num_setup_cmd_successful = models.BigIntegerField(editable=True,default=0)
+
+
 
 # use Migration to create a static table with one entry per choice for GranChoice (see REAMDME)
 
@@ -216,13 +243,14 @@ class GranChoice(models.Model):
         max_length=7, choices=GRAN_CHOICES, default=HOUR, primary_key=True)
 
 
-class OrgCost(models.Model):  # Wrapper for Cost Explorer API
-    org = models.ForeignKey('OrgAccount',
-                            on_delete=models.CASCADE,
-                            null=True,
-                            blank=True,
-                            editable=False,
-                            related_name='fk_c_org')
+class Cost(models.Model):  # Wrapper for Cost Explorer API
+    id = models.UUIDField(default=uuid.uuid4,
+                          unique=True,
+                          primary_key=True,
+                          editable=False)
+    content_type = models.ForeignKey(ContentType,on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey('content_type', 'object_id')
     creation_date = models.DateTimeField(auto_now_add=True)
     modified_date = models.DateTimeField(auto_now=True)
     gran = models.ForeignKey(GranChoice, on_delete=models.PROTECT,
@@ -241,7 +269,7 @@ class OrgCost(models.Model):  # Wrapper for Cost Explorer API
     # from the aws cost explorer (minimize # calls to 3 a day per
     cost_refresh_time = models.DateTimeField(editable=True,default=django.utils.timezone.now)
 
-class OrgNumNode(models.Model):
+class ClusterNumNode(models.Model):
     id = models.UUIDField(default=uuid.uuid4,
                           unique=True,
                           primary_key=True,
@@ -251,18 +279,18 @@ class OrgNumNode(models.Model):
                              blank=True,
                              on_delete=models.CASCADE,
                              editable=False,
-                             related_name='fk_user_onn')
-    org = models.ForeignKey('OrgAccount',
-                            on_delete=models.CASCADE,
-                            null=True,
-                            blank=True,
-                            editable=False,
-                            related_name='fk_org_onn')
+                             related_name='fk_user_cnn')
+    cluster = models.ForeignKey('NodeGroup',
+                                on_delete=models.CASCADE,
+                                null=True,
+                                blank=True,
+                                editable=False,
+                                related_name='fk_cluster_cnn')
     desired_num_nodes = models.IntegerField(editable=True,  # this field can be edited in admin panel by user with admin privileges
-                                            default=OrgAccount.MIN_NODES,
+                                            default=ASGNodeLimits.MIN_NODES,
                                             validators=[
-                                                MinValueValidator(OrgAccount.MIN_NODES),
-                                                MaxValueValidator(OrgAccount.ABS_MAX_NODES)])
+                                                MinValueValidator(ASGNodeLimits.MIN_NODES),
+                                                MaxValueValidator(ASGNodeLimits.ABS_MAX_NODES)])
     expiration = models.DateTimeField(editable=True,null=True,blank=True)
     has_active_ps_cmd = models.BooleanField(default=False)
 
@@ -271,12 +299,12 @@ class PsCmdResult(models.Model):
                           unique=True,
                           primary_key=True,
                           editable=False)
-    org = models.ForeignKey('OrgAccount',
-                            null=True,
-                            on_delete=models.CASCADE,
-                            blank=True,
-                            editable=False,
-                            related_name='fk_org_cr')
+    cluster = models.ForeignKey('NodeGroup',
+                                null=True,
+                                on_delete=models.CASCADE,
+                                blank=True,
+                                editable=False,
+                                related_name='fk_cluster_cr')
     ps_cmd_output = models.TextField(   help_text='Output from the provisioning system server',
                                         default='',
                                         editable=False,
@@ -303,12 +331,12 @@ class OwnerPSCmd(models.Model):
                              on_delete=models.CASCADE,
                              editable=False,
                              related_name='fk_user_opscmd')
-    org = models.ForeignKey('OrgAccount',
-                            on_delete=models.CASCADE,
-                            null=True,
-                            blank=True,
-                            editable=False,
-                            related_name='fk_org_opscmd')
+    cluster = models.ForeignKey('NodeGroup',
+                                on_delete=models.CASCADE,
+                                null=True,
+                                blank=True,
+                                editable=False,
+                                related_name='fk_cluster_opscmd')
     ps_cmd = models.CharField(  max_length=32,
                                 default='',
                                 blank=True,

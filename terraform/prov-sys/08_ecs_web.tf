@@ -31,11 +31,23 @@ data "template_file" "prov-sys" {
     django_app_port               = var.django_app_port
     nginx_port                    = var.nginx_port
     redis_port                    = var.redis_port
-    rds_db_name                   = local.provsys_creds.rds_db_name
-    rds_username                  = local.provsys_creds.rds_username
-    rds_password                  = local.provsys_creds.rds_password
-    rds_port                      = local.provsys_creds.rds_port
-    rds_hostname                  = aws_db_instance.prov-sys.address
+
+    rds_legacy_db_name            = local.provsys_creds.rds_db_name
+    rds_legacy_username           = local.provsys_creds.rds_username
+    rds_legacy_password           = local.provsys_creds.rds_password
+    rds_legacy_port               = local.provsys_creds.rds_port
+    rds_legacy_hostname           = aws_db_instance.prov-sys.address
+
+    rds_db_name                   = local.provsys_creds.rds_db_name_v4
+    rds_username                  = local.provsys_creds.rds_username_v4
+    rds_password                  = local.provsys_creds.rds_password_v4
+    rds_port                      = local.provsys_creds.rds_port_v4
+    rds_hostname                  = aws_db_instance.prov-sys-v4.address
+
+    create_new_db                 = var.create_new_db
+    run_migrations                = var.run_migrations
+    run_data_migrations           = var.run_data_migrations
+
     django_settings_allowed_hosts = var.django_allowed_hosts
     django_csrf_trusted_origins   = var.django_csrf_trusted_origins
     django_secret_key             = local.provsys_creds.django_secret_key

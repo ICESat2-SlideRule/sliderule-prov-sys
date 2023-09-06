@@ -87,6 +87,10 @@
         },        
         "environment": [
             {
+                "name": "RUN_MIGRATIONS",
+                "value": "${run_migrations}"
+            },
+            {
                 "name": "SQL_ENGINE",
                 "value": "django.db.backends.postgresql"
             },
@@ -103,12 +107,32 @@
                 "value": "${rds_password}"
             },
             {
-                "name": "SQL_HOST",
+                "name": "POSTGRES_HOST",
                 "value": "${rds_hostname}"
             },
             {
-                "name": "SQL_PORT",
+                "name": "POSTGRES_PORT",
                 "value": "${rds_port}"
+            },
+            {
+                "name": "LEGACY_POSTGRES_DB",
+                "value": "${rds_legacy_db_name}"
+            },
+            {
+                "name": "LEGACY_POSTGRES_USER",
+                "value": "${rds_legacy_username}"
+            },
+            {
+                "name": "LEGACY_POSTGRES_PASSWORD",
+                "value": "${rds_legacy_password}"
+            },
+            {
+                "name": "LEGACY_POSTGRES_HOST",
+                "value": "${rds_legacy_hostname}"
+            },
+            {
+                "name": "LEGACY_POSTGRES_PORT",
+                "value": "${rds_legacy_port}"
             },
             {
                 "name": "DJANGO_ALLOWED_HOSTS",

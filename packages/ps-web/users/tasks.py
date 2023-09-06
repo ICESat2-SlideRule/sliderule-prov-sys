@@ -1,7 +1,7 @@
 from celery import shared_task,Task, app
 from users.models import PsCmdResult,OwnerPSCmd
 from django_celery_results.models import TaskResult
-from users.models import OrgAccount,PsCmdResult, Cluster, GranChoice, OrgAccount, OrgCost, User, OrgNumNode, PsCmdResult, Membership
+from users.models import OrgAccount,PsCmdResult, NodeGroup, GranChoice, OrgAccount, Cost, User, ClusterNumNode, PsCmdResult, Membership
 from django.core.exceptions import ValidationError
 from datetime import date, datetime, timedelta, timezone, tzinfo
 import grpc
@@ -79,99 +79,96 @@ def get_PROVISIONING_DISABLED(redis_interface):
         state = False
     return state
 
-def get_org_queue_name_str(orgAccount_name):
-    return f"ps-cmd-{orgAccount_name}"
+def get_cluster_queue_name_str(cluster_name):
+    return f"ps-cmd-{cluster_name}"
 
-def get_org_queue_name(orgAccountObj):
-    return get_org_queue_name_str(orgAccountObj.name)
+def get_cluster_queue_name(clusterObj):
+    return get_cluster_queue_name_str(clusterObj.__str__()) # has org name and cluster name to be unique
 
 def flush_expired_refresh_tokens():
     SHELL_CMD=f"python manage.py flushexpiredtokens".split(" ")
     LOG.info(f"subprocess--> {SHELL_CMD}")
     subprocess.Popen(SHELL_CMD)
 
-def format_onn(onn):
-    return "{"+ f"{OrgAccount.objects.get(id=onn.org_id).name},{onn.user.username},{onn.desired_num_nodes},{onn.expiration.strftime('%Y-%m-%d %H:%M:%S %Z')if onn.expiration is not None else 'None'} " +"}"
+def format_onn(cnn):
+    return "{"+ f"{OrgAccount.objects.get(id=cnn.org_id).name},{cnn.user.username},{cnn.desired_num_nodes},{cnn.expiration.strftime('%Y-%m-%d %H:%M:%S %Z')if cnn.expiration is not None else 'None'} " +"}"
 
 def format_num_nodes_tbl(org):
     msg = '['
     n=0
-    for onn in OrgNumNode.objects.filter(org=org).order_by('expiration'):
+    for cnn in ClusterNumNode.objects.filter(org=org).order_by('expiration'):
         if n != 0:
             msg = msg + ","
-        msg = msg + format_onn(onn)
+        msg = msg + format_onn(cnn)
         n = n + 1
     msg = msg + "]"
     return msg 
 
-def sort_ONN_by_nn_exp(orgAccountObj):
-    return OrgNumNode.objects.filter(org=orgAccountObj).order_by('-desired_num_nodes','expiration')
+def sort_CNN_by_nn_exp(clusterObj):
+    return ClusterNumNode.objects.filter(cluster=clusterObj).order_by('-desired_num_nodes','expiration')
 
-def sum_of_highest_nodes_for_each_user(orgAccountObj):
+def sum_of_highest_nodes_for_each_user(clusterObj):
     '''
         This routine is used to determine the number of nodes to use for the cluster.
         First, fetch the maximum desired_num_nodes for each user using annotate.
-        Then, filter the OrgNumNode table again to get the entries that match these maximum values for each user.
+        Then, filter the ClusterNumNode table again to get the entries that match these maximum values for each user.
         Finally, calculate the total and gather the list of IDs.
     
     '''
     # Get the highest desired_num_nodes for each user within the provided OrgAccount instance
-    highest_nodes_per_user = (OrgNumNode.objects
-                              .filter(org=orgAccountObj)
+    highest_nodes_per_user = (ClusterNumNode.objects
+                              .filter(cluster=clusterObj)
                               .values('user')
                               .annotate(max_nodes=Max('desired_num_nodes')))
 
-    # Filter the OrgNumNode table to get the entries that match these maximum values for each user within the OrgAccount
+    # Filter the ClusterNumNode table to get the entries that match these maximum values for each user within the OrgAccount
     ids_list = []
     for entry in highest_nodes_per_user:
-        ids = (OrgNumNode.objects
-               .filter(user_id=entry['user'], desired_num_nodes=entry['max_nodes'], org=orgAccountObj)
+        ids = (ClusterNumNode.objects
+               .filter(user_id=entry['user'], desired_num_nodes=entry['max_nodes'], cluster=clusterObj)
                .values_list('id', flat=True))
         string_ids = [str(id) for id in ids]  # Convert each UUID to string
         ids_list.extend(string_ids)
     # Sum up the highest nodes for all users within the OrgAccount
     num_nodes_to_deploy = sum(entry['max_nodes'] for entry in highest_nodes_per_user)
-    if (int(num_nodes_to_deploy) < orgAccountObj.min_node_cap):
-        #LOG.info(f"Clamped num_nodes_to_deploy to min_node_cap:{orgAccountObj.min_node_cap} from {num_nodes_to_deploy}")
-        num_nodes_to_deploy = orgAccountObj.min_node_cap
-    if(int(num_nodes_to_deploy) > orgAccountObj.max_node_cap):
-        #LOG.info(f"Clamped num_nodes_to_deploy to max_node_cap:{orgAccountObj.max_node_cap} from {num_nodes_to_deploy}")
-        num_nodes_to_deploy = orgAccountObj.max_node_cap
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+    if (int(num_nodes_to_deploy) < clusterObj.cfg_asg.min):
+        #LOG.info(f"Clamped num_nodes_to_deploy to min_node_cap:{clusterObj.cfg_asg.min} from {num_nodes_to_deploy}")
+        num_nodes_to_deploy = clusterObj.cfg_asg.min
+    if(int(num_nodes_to_deploy) > clusterObj.cfg_asg.max):
+        #LOG.info(f"Clamped num_nodes_to_deploy to max_node_cap:{clusterObj.cfg_asg.max} from {num_nodes_to_deploy}")
+        num_nodes_to_deploy = clusterObj.cfg_asg.max
     clusterObj.cnnro_ids = ids_list
     clusterObj.save(update_fields=['cnnro_ids'])
     return num_nodes_to_deploy, ids_list
 
 def cull_expired_entries(org,tm):
-    LOG.debug(f"started with {OrgNumNode.objects.filter(org=org).count()} OrgNumNode for {org.name}")
-    for onn in OrgNumNode.objects.filter(org=org).order_by('expiration'):
-        LOG.debug(f"onn.expiration:{onn.expiration} tm(now):{tm}")
-        if(onn.expiration <= tm):
-            LOG.info(f"deleting expired/null OrgNumNode request {format_onn(onn)}")
-            onn.delete()
+    LOG.debug(f"started with {ClusterNumNode.objects.filter(org=org).count()} ClusterNumNode for {org.name}")
+    for cnn in ClusterNumNode.objects.filter(org=org).order_by('expiration'):
+        LOG.debug(f"cnn.expiration:{cnn.expiration} tm(now):{tm}")
+        if(cnn.expiration <= tm):
+            LOG.info(f"deleting expired/null ClusterNumNode request {format_onn(cnn)}")
+            cnn.delete()
         else:
             LOG.debug("nothing to delete")
             break
-    LOG.debug(f"ended with {OrgNumNode.objects.filter(org=org).count()} OrgNumNode for {org.name}")
+    LOG.debug(f"ended with {ClusterNumNode.objects.filter(org=org).count()} ClusterNumNode for {org.name}")
 
 
-def need_destroy_for_changed_version_or_is_public(orgAccountObj,num_nodes_to_deploy):
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+def need_destroy_for_changed_version_or_is_public(clusterObj,num_nodes_to_deploy):
     # LOG.debug(f"cluster v:{clusterObj.cur_version} ip:{clusterObj.is_public} is_deployed:{clusterObj.is_deployed}")
-    # LOG.debug(f"    org v:{orgAccountObj.version} ip:{orgAccountObj.is_public}")
+    # LOG.debug(f"    org v:{clusterObj.version} ip:{clusterObj.is_public}")
     if clusterObj.is_deployed:
-        changed_version = (clusterObj.cur_version != orgAccountObj.version)
-        changed_is_public = (clusterObj.is_public != orgAccountObj.is_public)
+        changed_version = (clusterObj.cur_version != clusterObj.version)
+        changed_is_public = (clusterObj.is_public != clusterObj.is_public)
         #LOG.debug(f"changed_version:{changed_version} changed_is_public:{changed_is_public}")
         if changed_version or changed_is_public:
             #LOG.debug(f"changed_version:{changed_version} changed_is_public:{changed_is_public}")
-            if num_nodes_to_deploy != orgAccountObj.desired_num_nodes: # we (changed version or is_public) and we are processing a new set of top items (new deployment request)
-                LOG.info(f"num_nodes_to_deploy:{num_nodes_to_deploy} orgAccountObj.desired_num_nodes:{orgAccountObj.desired_num_nodes} need_destroy_for_changed_version_or_is_public: True")
+            if num_nodes_to_deploy != clusterObj.cfg_asg.num: # we (changed version or is_public) and we are processing a new set of top items (new deployment request)
+                LOG.info(f"num_nodes_to_deploy:{num_nodes_to_deploy} clusterObj.cfg_asg.num:{clusterObj.cfg_asg.num} need_destroy_for_changed_version_or_is_public: True")
                 return True
     return False
 
-def clean_up_ONN_cnnro_ids(orgAccountObj,suspend_provisioning):
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+def clean_up_CNN_cnnro_ids(clusterObj,suspend_provisioning):
     if clusterObj.cnnro_ids is not None:
 
         # Get the list of string UUIDs from the JSONField
@@ -180,40 +177,38 @@ def clean_up_ONN_cnnro_ids(orgAccountObj,suspend_provisioning):
         # Convert each string UUID to a UUID object
         uuids_list = [UUID(id) for id in string_uuids]
 
-        # Fetch the OrgNumNode instances
-        onns = OrgNumNode.objects.filter(id__in=uuids_list)
-        LOG.info(f"REMOVING OrgNumNode clusterObj.cnnro_ids: {onns}")
-        for onn in onns:
-            onn.delete()
-        cnt = OrgNumNode.objects.filter(org=orgAccountObj).count()
+        # Fetch the ClusterNumNode instances
+        cnns = ClusterNumNode.objects.filter(id__in=uuids_list)
+        LOG.info(f"REMOVING ClusterNumNode clusterObj.cnnro_ids: {cnns}")
+        for cnn in cnns:
+            cnn.delete()
+        cnt = ClusterNumNode.objects.filter(cluster=clusterObj).count()
         clusterObj.cnnro_ids = None
         clusterObj.save(update_fields=['cnnro_ids'])
     if suspend_provisioning:
-        orgAccountObj.provisioning_suspended = True
-        orgAccountObj.save(update_fields=['provisioning_suspended'])
-        LOG.warning(f"provisioning_suspended for {orgAccountObj.name}")
+        clusterObj.provisioning_suspended = True
+        clusterObj.save(update_fields=['provisioning_suspended'])
+        LOG.warning(f"provisioning_suspended for {clusterObj.name}")
 
-def check_provision_env_ready(orgAccountObj):
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+def check_provision_env_ready(clusterObj):
     setup_occurred = False
     if not clusterObj.provision_env_ready:
         st = datetime.now(timezone.utc)
-        psCmdResultObj,org_cmd_str = get_psCmdResultObj(orgAccountObj, 'SetUp', version=orgAccountObj.version, username=orgAccountObj.owner, is_adhoc=False)
-        LOG.info(f"STARTED {org_cmd_str} is_public:{orgAccountObj.is_public}")
+        psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj, 'SetUp', version=clusterObj.version, username=clusterObj.org.owner, is_adhoc=False)
+        LOG.info(f"STARTED {org_cmd_str} is_public:{clusterObj.is_public}")
         try:
             with ps_client.create_client_channel("control") as channel:
                 stub = ps_server_pb2_grpc.ControlStub(channel)
                 timeout= int(os.environ.get("GRPC_TIMEOUT_SECS",900))
                 rsp_gen = stub.SetUp(
                     ps_server_pb2.SetUpReq(
-                        name=orgAccountObj.name,
-                        version=orgAccountObj.version,
-                        is_public=orgAccountObj.is_public,
+                        name=clusterObj.name,
+                        version=clusterObj.version,
+                        is_public=clusterObj.is_public,
                         now=datetime.now(timezone.utc).strftime(FMT)),
                         timeout=timeout)
                 done = False
                 setup_occurred = True
-                clusterObj = Cluster.objects.get(org=orgAccountObj)
                 clusterObj.active_ps_cmd = 'SetUp'
                 clusterObj.save(update_fields=['active_ps_cmd'])
                 while(not done): 
@@ -223,7 +218,7 @@ def check_provision_env_ready(orgAccountObj):
                     try:
                         # Read until rrsp.done is True or until StopIteration exception is caught
                         rrsp = next(rsp_gen)  # grab the next one and process it
-                        psCmdResultObj.ps_cmd_output += get_cli_html(orgAccountObj, rrsp.cli)
+                        psCmdResultObj.ps_cmd_output += get_cli_html(rrsp.cli)
                         psCmdResultObj.save()
                         if rrsp.ps_server_error:
                             error_msg =  f"ps-server returned error for {org_cmd_str} FAILED with error:{rrsp.error_msg}"
@@ -270,46 +265,44 @@ def check_provision_env_ready(orgAccountObj):
                             psCmdResultObj.error = ''
                             psCmdResultObj.save(update_fields=['error'])
                             if not rrsp.ps_server_error:
-                                clusterObj = Cluster.objects.get(org=orgAccountObj)
                                 clusterObj.provision_env_ready = True
                                 ps_server_pb2.GetCurrentSetUpCfgRsp()
-                                rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=orgAccountObj.name))
+                                rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=clusterObj.org.name,cluster_name=clusterObj.name))
                                 clusterObj.prov_env_version = rsp.setup_cfg.version
                                 clusterObj.prov_env_is_public = rsp.setup_cfg.is_public
                                 if clusterObj.prov_env_version == '':
                                     clusterObj.provision_env_ready = False
-                                    orgAccountObj.provisioning_suspended = True
-                                    orgAccountObj.save(update_fields=['provisioning_suspended'])
-                                    LOG.warning(f"{orgAccountObj.name} cluster current_version is null Suspending provisioning")
-                                LOG.info(f"{orgAccountObj.name} cluster current_version:{clusterObj.cur_version} provision_env_ready:{clusterObj.provision_env_ready}")
+                                    clusterObj.provisioning_suspended = True
+                                    clusterObj.save(update_fields=['provisioning_suspended'])
+                                    LOG.warning(f"{clusterObj.org.name} cluster current_version is null Suspending provisioning")
+                                LOG.info(f"{clusterObj.org.name} cluster current_version:{clusterObj.cur_version} provision_env_ready:{clusterObj.provision_env_ready}")
+                                clusterObj.num_ps_cmd_successful += 1
+                                clusterObj.num_setup_cmd_successful += 1
+                                clusterObj.save(update_fields=['num_ps_cmd_successful','num_setup_cmd_successful'])
                                 clusterObj.save()
-                                orgAccountObj.num_ps_cmd_successful += 1
-                                orgAccountObj.num_setup_cmd_successful += 1
-                                orgAccountObj.save(update_fields=['num_ps_cmd_successful','num_setup_cmd_successful'])
                             LOG.info(f"{org_cmd_str} got rrsp done from ps_server!")
         except Exception as e:
-            error_msg = f"ERROR: {org_cmd_str}  {orgAccountObj.version}:"
+            error_msg = f"ERROR: {org_cmd_str}  {clusterObj.version}:"
             LOG.exception(f"{error_msg} caught exception:") 
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- {org_cmd_str} {orgAccountObj.version} ---"
+            psCmdResultObj.ps_cmd_summary_label = f" --- {org_cmd_str} {clusterObj.version} ---"
             psCmdResultObj.save()
 
         finally:
-            clusterObj = Cluster.objects.get(org=orgAccountObj)
             clusterObj.active_ps_cmd = ''
             clusterObj.save(update_fields=['active_ps_cmd'])
             time_to_process = datetime.now(timezone.utc) - st
             time_to_process = time_to_process - timedelta(microseconds=time_to_process.microseconds)
-            LOG.info(f"DONE {org_cmd_str} {orgAccountObj.version} has completed in {str(time_to_process)}")
-            if orgAccountObj.provisioning_suspended != clusterObj.provision_env_ready:
-                orgAccountObj.provisioning_suspended = not clusterObj.provision_env_ready
-                orgAccountObj.save(update_fields=['provisioning_suspended'])
+            LOG.info(f"DONE {org_cmd_str} {clusterObj.version} has completed in {str(time_to_process)}")
+            if clusterObj.provisioning_suspended != clusterObj.provision_env_ready:
+                clusterObj.provisioning_suspended = not clusterObj.provision_env_ready
+                clusterObj.save(update_fields=['provisioning_suspended'])
     return clusterObj.provision_env_ready,setup_occurred       
 
-def process_num_node_table(orgAccountObj,prior_need_refresh):
+def process_num_node_table(clusterObj,prior_need_refresh):
     '''
     This routine is called in the main loop (high frequency).
-    If the the OrgNumNode table changed and the highest num nodes desired 
+    If the the ClusterNumNode table changed and the highest num nodes desired 
     in the table is different than what is currently running
     then it will send and update to set desired num nodes to value in table 
                 OR 
@@ -323,168 +316,165 @@ def process_num_node_table(orgAccountObj,prior_need_refresh):
     '''
     # NOTE: Be careful where you put log statements in this routine
     try:
-        if not orgAccountObj.provisioning_suspended: 
-            env_ready,setup_occurred = check_provision_env_ready(orgAccountObj)
-            start_num_ps_cmds = orgAccountObj.num_ps_cmd
+        if not clusterObj.provisioning_suspended: 
+            env_ready,setup_occurred = check_provision_env_ready(clusterObj)
+            start_num_ps_cmds = clusterObj.num_ps_cmd
             if env_ready:
-                cull_expired_entries(orgAccountObj,datetime.now(timezone.utc))
-                num_nodes_to_deploy,cnnro_ids = sum_of_highest_nodes_for_each_user(orgAccountObj)
+                cull_expired_entries(clusterObj,datetime.now(timezone.utc))
+                num_nodes_to_deploy,cnnro_ids = sum_of_highest_nodes_for_each_user(clusterObj)
                 expire_time = None
-                onnTop = sort_ONN_by_nn_exp(orgAccountObj).first()
+                onnTop = sort_CNN_by_nn_exp(clusterObj).first()
                 if onnTop is not None:
-                    if need_destroy_for_changed_version_or_is_public(orgAccountObj,num_nodes_to_deploy):
+                    if need_destroy_for_changed_version_or_is_public(clusterObj,num_nodes_to_deploy):
                         try:
-                            clusterObj = Cluster.objects.get(org=orgAccountObj)
-                            LOG.info(f"TRIGGERED Destroy {orgAccountObj.name} --> cluster v:{clusterObj.cur_version} cluster is_public:{clusterObj.is_public} is_deployed:{clusterObj.is_deployed} org v:{orgAccountObj.version} orgAccount ip:{orgAccountObj.is_public} onnTop.desired_num_nodes:{onnTop.desired_num_nodes} orgAccountObj.desired_num_nodes:{orgAccountObj.desired_num_nodes}")
-                            process_Destroy_cmd(orgAccountObj=orgAccountObj, username=orgAccountObj.owner.username)
+                            LOG.info(f"TRIGGERED Destroy {clusterObj.org.name} --> cluster v:{clusterObj.cur_version} cluster is_public:{clusterObj.is_public} is_deployed:{clusterObj.is_deployed} v:{clusterObj.version} orgAccount ip:{clusterObj.is_public} onnTop.desired_num_nodes:{onnTop.desired_num_nodes} clusterObj.cfg_asg.num:{clusterObj.cfg_asg.num}")
+                            process_Destroy_cmd(clusterObj=clusterObj, username=clusterObj.org.owner.username)
                         except Exception as e:
-                            LOG.exception("ERROR processing Destroy when version or is_public changes in ONN: caught exception:")
-                            clean_up_ONN_cnnro_ids(orgAccountObj,suspend_provisioning=True)
-                            LOG.info(f"{orgAccountObj.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                            LOG.exception("ERROR processing Destroy when version or is_public changes in CNN: caught exception:")
+                            clean_up_CNN_cnnro_ids(clusterObj,suspend_provisioning=True)
+                            LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                             sleep(COOLOFF_SECS)
                     else:
                         user = onnTop.user
                         expire_time = onnTop.expiration
-                        if num_nodes_to_deploy != orgAccountObj.desired_num_nodes: 
-                            deploy_values ={'min_node_cap': orgAccountObj.min_node_cap, 'desired_num_nodes': num_nodes_to_deploy , 'max_node_cap': orgAccountObj.max_node_cap, 'version': orgAccountObj.version, 'is_public': orgAccountObj.is_public, 'expire_time': expire_time }
-                            LOG.info(f"{orgAccountObj.name} Using top entries of each user sorted by num/exp_tm  with num_nodes_to_set:{onnTop.desired_num_nodes} exp_time:{expire_time} ")
+                        if num_nodes_to_deploy != clusterObj.cfg_asg.num: 
+                            deploy_values ={'min_node_cap': clusterObj.cfg_asg.min, 'desired_num_nodes': num_nodes_to_deploy , 'max_node_cap': clusterObj.cfg_asg.max, 'version': clusterObj.version, 'is_public': clusterObj.is_public, 'expire_time': expire_time }
+                            LOG.info(f"{clusterObj.org.name} Using top entries of each user sorted by num/exp_tm  with num_nodes_to_set:{onnTop.desired_num_nodes} exp_time:{expire_time} ")
                             try:
-                                process_Update_cmd(orgAccountObj=orgAccountObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
+                                process_Update_cmd(clusterObj=clusterObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
                             except Exception as e:
-                                LOG.exception(f"{e.message} processing top ONN id:{onnTop.id} Update {orgAccountObj.name} {user.username} {deploy_values} Exception:")
-                                clean_up_ONN_cnnro_ids(orgAccountObj,suspend_provisioning=False)
-                                LOG.info(f"{orgAccountObj.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                                LOG.exception(f"{e.message} processing top CNN id:{onnTop.id} Update {clusterObj.org.name} {user.username} {deploy_values} Exception:")
+                                clean_up_CNN_cnnro_ids(clusterObj,suspend_provisioning=False)
+                                LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                                 sleep(COOLOFF_SECS)
-                            orgAccountObj.num_onn += 1
-                            orgAccountObj.save(update_fields=['num_onn'])
-                            LOG.info(f"Update {orgAccountObj.name} processed")
+                            clusterObj.num_onn += 1
+                            clusterObj.save(update_fields=['num_onn'])
+                            LOG.info(f"Update {clusterObj.org.name} processed")
                 else:
                     # No entries in table
-                    user = orgAccountObj.owner
-                    if orgAccountObj.destroy_when_no_nodes and (orgAccountObj.min_node_cap == 0):
-                        clusterObj = Cluster.objects.get(org=orgAccountObj)
+                    user = clusterObj.org.owner
+                    if clusterObj.destroy_when_no_nodes and (clusterObj.cfg_asg.min == 0):
                         if clusterObj.is_deployed:
-                            LOG.info(f"org:{orgAccountObj.name} destroy_when_no_nodes:{orgAccountObj.destroy_when_no_nodes} min_node_cap:{orgAccountObj.min_node_cap}")
+                            LOG.info(f"org:{clusterObj.org.name} destroy_when_no_nodes:{clusterObj.destroy_when_no_nodes} min_node_cap:{clusterObj.cfg_asg.min}")
                             try:
-                                process_Destroy_cmd(orgAccountObj=orgAccountObj, username=user.username)
+                                process_Destroy_cmd(clusterObj=clusterObj, username=user.username)
                             except Exception as e:
-                                LOG.exception("ERROR processing Destroy {orgAccountObj.name} when no entries in ONN: caught exception:")
-                                LOG.warning(f"Destroy {orgAccountObj.name} FAILED when no entries in ONN; Setting destroy_when_no_nodes to False")
-                                orgAccountObj.destroy_when_no_nodes = False
-                                orgAccountObj.min_node_cap = 0 
-                                orgAccountObj.desired_num_nodes = 0
-                                orgAccountObj.save(update_fields=['destroy_when_no_nodes','min_node_cap','desired_num_nodes'])
-                                LOG.info(f"{orgAccountObj.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                                LOG.exception("ERROR processing Destroy {clusterObj.org.name} when no entries in CNN: caught exception:")
+                                LOG.warning(f"Destroy {clusterObj.org.name} FAILED when no entries in CNN; Setting destroy_when_no_nodes to False")
+                                clusterObj.destroy_when_no_nodes = False
+                                clusterObj.cfg_asg.min = 0 
+                                clusterObj.cfg_asg.num = 0
+                                clusterObj.save(update_fields=['destroy_when_no_nodes','min_node_cap','desired_num_nodes'])
+                                LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                                 sleep(COOLOFF_SECS)
 
-                            orgAccountObj.num_onn += 1
-                            orgAccountObj.save(update_fields=['num_onn'])
-                            LOG.info(f"{orgAccountObj.name} Destroy processed")
+                            clusterObj.num_onn += 1
+                            clusterObj.save(update_fields=['num_onn'])
+                            LOG.info(f"{clusterObj.org.name} Destroy processed")
                     else:
-                        if orgAccountObj.min_node_cap != orgAccountObj.desired_num_nodes: 
-                            num_entries = OrgNumNode.objects.filter(org=orgAccountObj).count()
-                            LOG.info(f"{orgAccountObj.name} ({num_entries} (i.e. no) entries left; using min_node_cap:{orgAccountObj.min_node_cap} exp_time:None")
-                            deploy_values ={'min_node_cap': orgAccountObj.min_node_cap, 'desired_num_nodes': orgAccountObj.min_node_cap, 'max_node_cap': orgAccountObj.max_node_cap,'version': orgAccountObj.version, 'is_public': orgAccountObj.is_public, 'expire_time': expire_time }
+                        if clusterObj.cfg_asg.min != clusterObj.cfg_asg.num: 
+                            num_entries = ClusterNumNode.objects.filter(cluster=clusterObj).count()
+                            LOG.info(f"{clusterObj.org.name} ({num_entries} (i.e. no) entries left; using min_node_cap:{clusterObj.cfg_asg.min} exp_time:None")
+                            deploy_values ={'min_node_cap': clusterObj.cfg_asg.min, 'desired_num_nodes': clusterObj.cfg_asg.min, 'max_node_cap': clusterObj.cfg_asg.max,'version': clusterObj.version, 'is_public': clusterObj.is_public, 'expire_time': expire_time }
                             try:
-                                process_Update_cmd(orgAccountObj=orgAccountObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
+                                process_Update_cmd(clusterObj=clusterObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
                             except Exception as e:
-                                LOG.exception("ERROR in Update {orgAccountObj.name} ps_cmd when no entries in ONN and min != desired: caught exception:")
-                                LOG.warning(f"Setting {orgAccountObj.name} min_node_cap to zero; Update FAILED when no entries in ONN and min_node_cap != desired_num_nodes (i.e. current target, assumed num nodes)")
-                                orgAccountObj.min_node_cap = 0 
-                                orgAccountObj.desired_num_nodes = 0
-                                orgAccountObj.save(update_fields=['min_node_cap','desired_num_nodes'])
-                                LOG.info(f"{orgAccountObj.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                                LOG.exception("ERROR in Update {clusterObj.org.name} ps_cmd when no entries in CNN and min != desired: caught exception:")
+                                LOG.warning(f"Setting {clusterObj.org.name} min_node_cap to zero; Update FAILED when no entries in CNN and min_node_cap != desired_num_nodes (i.e. current target, assumed num nodes)")
+                                clusterObj.cfg_asg.min = 0 
+                                clusterObj.cfg_asg.num = 0
+                                clusterObj.save(update_fields=['min_node_cap','desired_num_nodes'])
+                                LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                                 sleep(COOLOFF_SECS)
 
-                            orgAccountObj.num_onn += 1
-                            orgAccountObj.save(update_fields=['num_onn'])
-                            LOG.info(f"{orgAccountObj.name} Update processed")
+                            clusterObj.num_onn += 1
+                            clusterObj.save(update_fields=['num_onn'])
+                            LOG.info(f"{clusterObj.org.name} Update processed")
                 # if we setup the env but did not process any commands, then we need to Refresh to set state
                 need_refresh = False
                 if setup_occurred:
-                    if orgAccountObj.num_ps_cmd == start_num_ps_cmds:
+                    if clusterObj.num_ps_cmd == start_num_ps_cmds:
                         # setup with no commands processed
                         need_refresh = True
                 else:
-                    if prior_need_refresh and (orgAccountObj.num_ps_cmd == start_num_ps_cmds):
+                    if prior_need_refresh and (clusterObj.num_ps_cmd == start_num_ps_cmds):
                         # setup with no commands processed
                         need_refresh = True
                 if need_refresh:
                     try:
-                        LOG.info(f"Refresh {orgAccountObj.name} post SetUp")
-                        process_Refresh_cmd(orgAccountObj=orgAccountObj, username=orgAccountObj.owner.username)
+                        LOG.info(f"Refresh {clusterObj.org.name} post SetUp")
+                        process_Refresh_cmd(clusterObj=clusterObj, username=clusterObj.owner.username)
                     except Exception as e:
-                        LOG.exception("ERROR processing Refresh {orgAccountObj.name} caught exception:")
-                        LOG.info(f"{orgAccountObj.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                        LOG.exception("ERROR processing Refresh {clusterObj.org.name} caught exception:")
+                        LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                         sleep(COOLOFF_SECS)
     except Exception as e:
-        LOG.exception(f"{orgAccountObj.name} caught exception:")
-        LOG.info(f"{orgAccountObj.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+        LOG.exception(f"{clusterObj.org.name} caught exception:")
+        LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
         for handler in LOG.handlers:
             handler.flush()
         sleep(COOLOFF_SECS)
 
-def get_or_create_OrgNumNodes(org,user,desired_num_nodes,expire_date):
-    # if it doesn't exist create it then process all orgNumNodes for org                                          
+def get_or_create_ClusterNumNodes(clusterObj,user,desired_num_nodes,expire_date):
+    # if it doesn't exist create it then process all clusterNumNodes for org                                          
     # if expire date comes from jwt then it will match
     # First try exact match
     # then create one
-    orgNumNode = None
+    clusterNumNode = None
     redundant = False
     msg = ''
     try:
-        orgNumNode,created = OrgNumNode.objects.get_or_create(user=user,org=org, desired_num_nodes=desired_num_nodes,expiration=expire_date)
+        clusterNumNode,created = ClusterNumNode.objects.get_or_create(user=user,cluster=clusterObj, desired_num_nodes=desired_num_nodes,expiration=expire_date)
         if created:
             if expire_date is not None:
-                msg = f"Created new entry for {org.name} {user.username} desired_num_nodes {orgNumNode.desired_num_nodes} uuid:{orgNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
+                msg = f"Created new entry for {clusterObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
             else:
-                msg = f"Created new entry for {org.name} {user.username} desired_num_nodes {orgNumNode.desired_num_nodes} uuid:{orgNumNode.id} with NO expiration"
+                msg = f"Created new entry for {clusterObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} with NO expiration"
         else:         
-            msg = f"An entry already exists for {org.name} {user.username} desired_num_nodes {orgNumNode.desired_num_nodes} uuid:{orgNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
+            msg = f"An entry already exists for {clusterObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
             redundant = True
-        LOG.info(f"{msg} cnt:{OrgNumNode.objects.count()}")
+        LOG.info(f"{msg} cnt:{ClusterNumNode.objects.count()}")
 
     except Exception as e:
         LOG.exception("caught exception:")
-        orgNumNode = None
-    return orgNumNode,redundant,msg
+        clusterNumNode = None
+    return clusterNumNode,redundant,msg
 
-def process_num_nodes_api(name,user,desired_num_nodes,expire_time,is_owner_ps_cmd):
+def process_num_nodes_api(org_name,cluster_name,user,desired_num_nodes,expire_time):
     '''
         processes the APIs for setting desired num nodes
     '''
     try:
         jstatus = ''
-        LOG.info(f"process_num_nodes_api({name},{user},{desired_num_nodes},{expire_time})")
+        LOG.info(f"process_num_nodes_api({org_name},{cluster_name},{user},{desired_num_nodes},{expire_time})")
         if int(desired_num_nodes) < 0:
             msg = f"desired_num_nodes:{desired_num_nodes} must be >= 0"
             raise ValidationError(msg)
-        orgAccountObj = OrgAccount.objects.get(name=name)
-        clusterObj = Cluster.objects.get(org=orgAccountObj)
-        if (not clusterObj.is_deployed) and (not orgAccountObj.allow_deploy_by_token):
-            msg = f"Org {orgAccountObj.name} is not configured to allow deploy by token"
+        clusterObj = NodeGroup.objects.get(name=cluster_name)
+        if (not clusterObj.is_deployed) and (not clusterObj.allow_deploy_by_token):
+            msg = f"NodeGroup {clusterObj} is not configured to allow deploy by token"
             raise ClusterDeployAuthError(msg)
         if(not clusterObj.is_deployed):
-            msg = f"Deploying {orgAccountObj.name} cluster"
+            msg = f"Deploying {clusterObj.org.name} cluster"
         else:
-            msg = f"Updating {orgAccountObj.name} cluster"
+            msg = f"Updating {clusterObj.org.name} cluster"
 
-        orgNumNode,redundant,onn_msg = get_or_create_OrgNumNodes(user=user,
-                                                            org=orgAccountObj,
-                                                            desired_num_nodes=desired_num_nodes,
-                                                            expire_date=expire_time)
+        clusterNumNode,redundant,onn_msg = get_or_create_ClusterNumNodes(user=user,
+                                                                    cluster=clusterObj,
+                                                                    desired_num_nodes=desired_num_nodes,
+                                                                    expire_date=expire_time)
         msg += f" {onn_msg}"
-        if orgNumNode:
+        if clusterNumNode:
             if redundant:
-                msg += f" using identical queued capacity request for {orgNumNode.org.name} from {orgNumNode.user.username} with {desired_num_nodes} nodes to expire:{expire_time.strftime(FMT) if expire_time is not None else 'exp_tm:None'}"
+                msg += f" using identical queued capacity request for {clusterNumNode.org.name} from {clusterNumNode.user.username} with {desired_num_nodes} nodes to expire:{expire_time.strftime(FMT) if expire_time is not None else 'exp_tm:None'}"
                 jstatus = 'REDUNDANT'
             else:
-                msg += f" created and queued capacity request for {orgNumNode.org.name} from {user.username} with {desired_num_nodes} nodes to expire:{expire_time.strftime(FMT) if expire_time is not None else 'exp_tm:None'}"
+                msg += f" created and queued capacity request for {clusterNumNode.org.name} from {user.username} with {desired_num_nodes} nodes to expire:{expire_time.strftime(FMT) if expire_time is not None else 'exp_tm:None'}"
                 jstatus = 'QUEUED'
             jrsp = {'status':jstatus,"msg":msg,'error_msg':''}
             status = 200
         else:
-            emsg = f"FAILED to process request for {name} {user} {desired_num_nodes} {expire_time} - Server Error"
+            emsg = f"FAILED to process request for {org_name} {cluster_name} {user} {desired_num_nodes} {expire_time} - Server Error"
             jrsp = {'status':'FAILED',"msg":'','error_msg':emsg}
             status = 500
     except ClusterDeployAuthError as e:
@@ -521,11 +511,11 @@ def get_ps_versions():
     except Exception as e:
         LOG.exception("caught exception:")
 
-def perform_cost_accounting_for_all_orgs():
-    orgs_qs = OrgAccount.objects.all()
-    LOG.info("orgs_qs:%s", repr(orgs_qs))
-    for org in orgs_qs:
-        cost_accounting(org)
+def perform_cost_accounting_for_all_clusters():
+    c_qs = NodeGroup.objects.all()
+    LOG.info("orgs_qs:%s", repr(c_qs))
+    for c in c_qs:
+        cost_accounting(c)
 
 def get_current_cost_report(name, gran, time_now):
     now_str = datetime.strftime(time_now, FMT_Z)
@@ -537,41 +527,41 @@ def get_current_cost_report(name, gran, time_now):
     #LOG.info("Sending rsp...")
     return MessageToJson(rsp), rsp
 
-def get_org_cost_data(orgAccountObj, granObj, orgCostObj):
+def get_org_cost_data(clusterObj, granObj, clusterCostObj):
     THIS_FMT = FMT_DAILY
     updated = False
     time_now = datetime.now(timezone.utc)
-    time_stale = time_now - orgCostObj.cost_refresh_time
-    LOG.info("%s %s now:%s/%s orgCostObj.cost_refresh_time:%s time_stale:%s > %s ?", orgAccountObj.name,
-             granObj.granularity, datetime.now(timezone.utc), datetime.now(), orgCostObj.cost_refresh_time, time_stale, timedelta(hours=8))
-    if time_stale > timedelta(hours=8) or str(orgCostObj.ccr) == "{}" or str(orgCostObj.ccr) == NULL_CCR:
+    time_stale = time_now - clusterCostObj.cost_refresh_time
+    LOG.info("%s %s now:%s/%s clusterCostObj.cost_refresh_time:%s time_stale:%s > %s ?", clusterObj.org.name,
+             granObj.granularity, datetime.now(timezone.utc), datetime.now(), clusterCostObj.cost_refresh_time, time_stale, timedelta(hours=8))
+    if time_stale > timedelta(hours=8) or str(clusterCostObj.ccr) == "{}" or str(clusterCostObj.ccr) == NULL_CCR:
         #LOG.info("Calling get_current_cost_report <<<<<<<<<<<-------------->>>>>>>>>>>")
-        ccr, rsp = get_current_cost_report(orgAccountObj.name, granObj.granularity, time_now)
+        ccr, rsp = get_current_cost_report(clusterObj.org.name, granObj.granularity, time_now)
         if rsp.server_error == False:
-            orgCostObj.cost_refresh_time = time_now
-            orgAccountObj.most_recent_recon_time = time_now 
+            clusterCostObj.cost_refresh_time = time_now
+            clusterObj.most_recent_recon_time = time_now 
             if len(rsp.tm) > 0:
-                if(orgCostObj.gran.granularity == 'HOURLY'):
+                if(clusterCostObj.gran.granularity == 'HOURLY'):
                     THIS_FMT = FMT_Z
                 most_recent_tm_str = rsp.tm[len(rsp.tm)-1]
                 most_recent_tm = datetime.strptime(most_recent_tm_str, THIS_FMT).replace(tzinfo=pytz.utc)
-                orgCostObj.tm = most_recent_tm
-                orgCostObj.cnt = rsp.stats.cnt
-                orgCostObj.avg = rsp.stats.avg
-                orgCostObj.min = rsp.stats.min
-                orgCostObj.max = rsp.stats.max
-                orgCostObj.std = rsp.stats.std
-                orgCostObj.ccr = ccr
+                clusterCostObj.tm = most_recent_tm
+                clusterCostObj.cnt = rsp.stats.cnt
+                clusterCostObj.avg = rsp.stats.avg
+                clusterCostObj.min = rsp.stats.min
+                clusterCostObj.max = rsp.stats.max
+                clusterCostObj.std = rsp.stats.std
+                clusterCostObj.ccr = ccr
                 updated = True
-                #LOG.info("Saved %s orgCostObj for:%s tm:%s ccr=%s",
-                #         orgCostObj.gran.granularity,  orgCostObj.org.name, orgCostObj.tm, ccr)
-                LOG.info("Saved %s orgCostObj for:%s tm:%s",
-                        orgCostObj.gran.granularity,  orgCostObj.org.name, orgCostObj.tm)
+                #LOG.info("Saved %s clusterCostObj for:%s tm:%s ccr=%s",
+                #         clusterCostObj.gran.granularity,  clusterCostObj.org.name, clusterCostObj.tm, ccr)
+                LOG.info("Saved %s clusterCostObj for:%s tm:%s",
+                        clusterCostObj.gran.granularity,  clusterCostObj.org.name, clusterCostObj.tm)
             else:
-                LOG.info("No cost data for %s %s",orgAccountObj.name, granObj.granularity)
-                if str(orgCostObj.ccr) == "{}":
-                    orgCostObj.ccr = "{ }" # so keep from reading null CCRs
-            orgCostObj.save() # this only saves the updated orgCostObj.cost_refresh_time
+                LOG.info("No cost data for %s %s",clusterObj.org.name, granObj.granularity)
+                if str(clusterCostObj.ccr) == "{}":
+                    clusterCostObj.ccr = "{ }" # so keep from reading null CCRs
+            clusterCostObj.save() # this only saves the updated clusterCostObj.cost_refresh_time
         else:
             LOG.error(f"received error from ps_server:{rsp.error_msg}")
     return updated
@@ -587,22 +577,22 @@ def getGranChoice(granularity):
         raise
     return granObj
 
-def update_orgCost(orgAccountObj, gran):
+def update_clusterCost(clusterObj, gran):
     granObj = getGranChoice(gran)
     get_data = False
-    orgCostObj = None
+    clusterCostObj = None
     try:
-        orgCostObj = OrgCost.objects.get(org=orgAccountObj, gran=granObj)
+        clusterCostObj = Cost.objects.get(cluster=clusterObj, gran=granObj)
     except ObjectDoesNotExist as e:
-        LOG.warning(f"no orgCostObj for {orgAccountObj.name} {granObj.granularity}")
-        orgCostObj = OrgCost(org=orgAccountObj, gran=granObj, cost_refresh_time=datetime.now(timezone.utc)-timedelta(weeks=52),tm=datetime.now(timezone.utc))
-        LOG.info("%s %s %s New orgCostObj created", orgCostObj.org.name,orgCostObj.gran.granularity, orgCostObj.tm)
+        LOG.warning(f"no clusterCostObj for {clusterObj.org.name} {granObj.granularity}")
+        clusterCostObj = Cost(cluster=clusterObj, gran=granObj, cost_refresh_time=datetime.now(timezone.utc)-timedelta(weeks=52),tm=datetime.now(timezone.utc))
+        LOG.info("%s %s %s New clusterCostObj created", clusterCostObj.org.name,clusterCostObj.gran.granularity, clusterCostObj.tm)
         get_data = True
-    if orgCostObj is not None:
+    if clusterCostObj is not None:
         #LOG.info(datetime.now(timezone.utc))
-        diff_tm = datetime.now(timezone.utc) - orgCostObj.cost_refresh_time
-        #LOG.info("%s %s %s - %s = %s", orgAccountObj.name, gran,datetime.now(timezone.utc), orgCostObj.tm, diff_tm)
-        if str(orgCostObj.ccr) == "{}" or str(orgCostObj.ccr) == NULL_CCR:
+        diff_tm = datetime.now(timezone.utc) - clusterCostObj.cost_refresh_time
+        #LOG.info("%s %s %s - %s = %s", clusterObj.org.name, gran,datetime.now(timezone.utc), clusterCostObj.tm, diff_tm)
+        if str(clusterCostObj.ccr) == "{}" or str(clusterCostObj.ccr) == NULL_CCR:
             get_data = True
             LOG.info("Triggered by empty set")
         else:
@@ -611,88 +601,105 @@ def update_orgCost(orgAccountObj, gran):
                 LOG.info("Triggered by stale ccr > 8 hrs")
                 get_data = True
     else:
-        LOG.error("FAILED to create orgCostObj for %s %s",orgAccountObj.name, granObj.granularity)
+        LOG.error("FAILED to create clusterCostObj for %s %s",clusterObj.org.name, granObj.granularity)
         get_data = False
     updated = False
     if get_data:
-        # will create orgCostObj if needed
-        LOG.info("calling get_org_cost_data for %s %s",orgAccountObj.name, granObj.granularity)
-        updated = get_org_cost_data(orgAccountObj, granObj, orgCostObj)
+        # will create clusterCostObj if needed
+        LOG.info("calling get_org_cost_data for %s %s",clusterObj.org.name, granObj.granularity)
+        updated = get_org_cost_data(clusterObj, granObj, clusterCostObj)
 
-    next_refresh_time = orgCostObj.cost_refresh_time +  timedelta(hours=8)
+    next_refresh_time = clusterCostObj.cost_refresh_time +  timedelta(hours=8)
     if updated:
-        LOG.info("%s CCR DID     update. Last refresh was: %s next refresh will be: %s",gran,orgCostObj.cost_refresh_time , next_refresh_time )
+        LOG.info("%s CCR DID     update. Last refresh was: %s next refresh will be: %s",gran,clusterCostObj.cost_refresh_time , next_refresh_time )
     else:
-        LOG.info("%s CCR did not update. Last refresh was: %s next refresh will be: %s",gran,orgCostObj.cost_refresh_time , next_refresh_time )
+        LOG.info("%s CCR did not update. Last refresh was: %s next refresh will be: %s",gran,clusterCostObj.cost_refresh_time , next_refresh_time )
 
     return updated
 
 
-def update_ccr(org):
-    updated = (update_orgCost(org, "HOURLY") or update_orgCost(org, "DAILY") or update_orgCost(org, "MONTHLY"))
+def update_ccr(clusterObj):
+    '''
+        updates the current cost report from the ps-server 
+    '''
+    updated = (update_clusterCost(clusterObj, "HOURLY") or update_clusterCost(clusterObj, "DAILY") or update_clusterCost(clusterObj, "MONTHLY"))
     LOG.info("updated:%s",updated)
     return updated
 
-def update_cur_num_nodes(orgAccountObj):
-    #LOG.info(f"update_cur_num_nodes:{orgAccountObj.name}")
+def update_cur_num_nodes(clusterObj):
+    #LOG.info(f"update_cur_num_nodes:{clusterObj.org.name}")
     with ps_client.create_client_channel("account") as channel:
         try:
-            clusterObj = Cluster.objects.get(org=orgAccountObj) 
             ac = ps_server_pb2_grpc.AccountStub(channel)
             region = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-            req = ps_server_pb2.NumNodesReq(name=clusterObj.org.name,version=clusterObj.org.version,region=region)
+            req = ps_server_pb2.NumNodesReq(name=clusterObj.org.name,cluster_name=clusterObj.name,version=clusterObj.org.version,region=region)
             #LOG.info(req)
             rsp = ac.NumNodes(req)
-            clusterObj.cur_nodes = rsp.num_nodes
+            clusterObj.cur_asg.num = rsp.num_nodes
             clusterObj.save(update_fields=['cur_nodes'])
-            LOG.info(f"update_cur_num_nodes:{orgAccountObj.name} cur_nodes:{clusterObj.cur_nodes}")
-            return clusterObj.cur_nodes
+            LOG.info(f"update_cur_num_nodes:{clusterObj} cur_nodes:{clusterObj.cur_asg.num}")
+            return clusterObj.cur_asg.num
         except Exception as e:
             LOG.error(f"FAILED: caught exception on NumNodesReq")
             raise
 
-def update_burn_rates(orgAccountObj):
+def clamp_time(hours):
+    days = 0
+    if hours < 0:
+        hours = 0
+    else:
+        if hours > 24:
+            days = int(hours/24)
+            if days < 365*5:
+                hours = hours - days*24
+            else:
+                days = 365*5
+                hours = 0
+    return days,hours
+
+
+def update_burn_rates(clusterObj):
     global FMT
     try:
-        update_cur_num_nodes(orgAccountObj)
+        update_cur_num_nodes(clusterObj)
 
-        min_nodes = orgAccountObj.min_node_cap
-        max_nodes = orgAccountObj.max_node_cap
+        min_nodes = clusterObj.cur_asg.min
+        max_nodes = clusterObj.cur_asg.max
 
         if min_nodes > 0:
-            forecast_min_hrly = orgAccountObj.node_mgr_fixed_cost + min_nodes*orgAccountObj.node_fixed_cost
+            forecast_min_hrly = clusterObj.node_mgr_fixed_cost + min_nodes*clusterObj.node_fixed_cost
         else:
             forecast_min_hrly = 0.0001
 
-        clusterObj = Cluster.objects.get(org=orgAccountObj)
-        if clusterObj.cur_nodes > 0:
-            forecast_cur_hrly = orgAccountObj.node_mgr_fixed_cost + clusterObj.cur_nodes*orgAccountObj.node_fixed_cost
+        if clusterObj.cur_asg.num > 0:
+            forecast_cur_hrly = clusterObj.node_mgr_fixed_cost + clusterObj.cur_asg.num*clusterObj.node_fixed_cost
         else:
             forecast_cur_hrly = 0.0001
 
-        forecast_max_hrly = orgAccountObj.node_mgr_fixed_cost + max_nodes*orgAccountObj.node_fixed_cost
+        forecast_max_hrly = clusterObj.node_mgr_fixed_cost + max_nodes*clusterObj.node_fixed_cost
 
-        orgAccountObj.min_hrly      = forecast_min_hrly
-        orgAccountObj.cur_hrly      = forecast_cur_hrly
-        orgAccountObj.max_hrly      = forecast_max_hrly
-        orgAccountObj.save(update_fields=['min_hrly','cur_hrly','max_hrly'])
-        #LOG.info(f"{orgAccountObj.name} forecast min/cur/max hrly burn rate {forecast_min_hrly}/{forecast_cur_hrly}/{forecast_max_hrly}")
+        clusterObj.min_hrly      = forecast_min_hrly
+        clusterObj.cur_hrly      = forecast_cur_hrly
+        clusterObj.max_hrly      = forecast_max_hrly
+        clusterObj.save(update_fields=['min_hrly','cur_hrly','max_hrly'])
+        #LOG.info(f"{clusterObj.org.name} forecast min/cur/max hrly burn rate {forecast_min_hrly}/{forecast_cur_hrly}/{forecast_max_hrly}")
 
-        min_hrs_left = float(orgAccountObj.balance)/forecast_min_hrly
+        min_days_left,min_hrs_left = clamp_time(float(clusterObj.balance)/forecast_min_hrly)
         # LOG.info("%s = %s/%s    min_hrs_left = balance/forecast_min_hrly (assuming no allowance) ",
-        #          min_hrs_left, orgAccountObj.balance, forecast_min_hrly)
-        min_ddt = datetime.now(timezone.utc)+timedelta(hours=min_hrs_left)
+        #          min_hrs_left, clusterObj.balance, forecast_min_hrly)
+        clusterObj.min_ddt = datetime.now(timezone.utc)+timedelta(days=min_days_left,hours=min_hrs_left)
 
-        cur_hrs_left = float(orgAccountObj.balance)/forecast_cur_hrly
+        cur_days_left,cur_hrs_left = clamp_time(float(clusterObj.balance)/forecast_cur_hrly)
         # LOG.info("%s = %s/%s    cur_hrs_left = balance/forecast_cur_hrly  (assuming no allowance) ",
-        #          cur_hrs_left, orgAccountObj.balance, forecast_cur_hrly)
-        cur_ddt = datetime.now(timezone.utc)+timedelta(hours=cur_hrs_left)
+        #          cur_hrs_left, clusterObj.balance, forecast_cur_hrly)
+        clusterObj.cur_ddt = datetime.now(timezone.utc)+timedelta(days=cur_days_left,hours=cur_hrs_left)
 
-        max_hrs_left = float(orgAccountObj.balance)/forecast_max_hrly
+        max_days_left,max_hrs_left = clamp_time(float(clusterObj.balance)/forecast_max_hrly)
         # LOG.info("%s = %s/%s    max_hrs_left = balance/forecast_max_hrly  (assuming no allowance) ",
-        #          max_hrs_left, orgAccountObj.balance, forecast_max_hrly)
-        max_ddt = datetime.now(timezone.utc)+timedelta(hours=max_hrs_left)
+        #          max_hrs_left, clusterObj.balance, forecast_max_hrly)
+        clusterObj.max_ddt = datetime.now(timezone.utc)+timedelta(days=max_days_left,hours=max_hrs_left)
 
+        clusterObj.save(update_fields=['min_ddt','cur_ddt','max_ddt'])
         # LOG.info("Assuming no allowance.... min_ddt: %s cur_ddt: %s max_ddt: %s",
         #          datetime.strftime(min_ddt, FMT),
         #          datetime.strftime(cur_ddt, FMT),
@@ -726,25 +733,25 @@ def getFiscalStartDate():
 def get_utc_tm(tm,tm_fmt_to_use):
     return pytz.utc.localize(datetime.strptime(tm, tm_fmt_to_use)) #localize handles daylight savings time
 
-def calculate_account_bal_and_fytd_bal(org,rsp):
+def calculate_account_bal_and_fytd_bal(obj,rsp):
     '''
-    This routine does not and should not change org 
+    This routine does not and should not change obj (i.e. the OrgAccount object or NodeGroup object)
     It is READ ONLY
     '''
-    new_fytd_accrued_cost = org.fytd_accrued_cost
+    new_fytd_accrued_cost = obj.budget.fytd_accrued_cost
     fytd_date = getFiscalStartDate()
-    new_mrct = org.most_recent_charge_time
-    new_balance = Decimal(org.balance)
+    new_mrct = obj.budget.most_recent_charge_time
+    new_balance = Decimal(obj.budget.balance)
     most_recent_tm_str = rsp.tm[len(rsp.tm)-1]
     if 'Z' in most_recent_tm_str: # i.e. are these hourly timestamps
         tm_fmt_to_use = FMT_Z
     else:
         tm_fmt_to_use = FMT_DAILY
-    LOG.info(f"{org.name} most_recent_tm_str:{most_recent_tm_str} tm_fmt_to_use:{tm_fmt_to_use} len(rsp.cost):{len(rsp.cost)}")
+    LOG.info(f"{obj.__str__()} most_recent_tm_str:{most_recent_tm_str} tm_fmt_to_use:{tm_fmt_to_use} len(rsp.cost):{len(rsp.cost)}")
     most_recent_tm = get_utc_tm(most_recent_tm_str, tm_fmt_to_use)
     LOG.info(f"now:{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} new_mrct:{new_mrct.strftime('%Y-%m-%d %H:%M:%S')} most_recent_tm:{most_recent_tm.strftime('%Y-%m-%d %H:%M:%S')} fytd_date:{fytd_date.strftime('%Y-%m-%d %H:%M:%S')}")
     if new_mrct < fytd_date and most_recent_tm > fytd_date:
-        LOG.info(f"{org.name} is resetting FYTD accrued cost (tm crossed FY boundary)")
+        LOG.info(f"{obj.__str__()} is resetting FYTD accrued cost (tm crossed FY boundary)")
         new_fytd_accrued_cost = Decimal(0.00)
     bal_changed = False
     fytd_changed = False
@@ -760,18 +767,18 @@ def calculate_account_bal_and_fytd_bal(org,rsp):
                 fytd_changed = True
                 new_fytd_accrued_cost += Decimal(cost)
             new_mrct = tm
-            #LOG.info(f"{org.name} for rsp.tm[{ndx}]:{tm} debiting {cost:.2f}")
+            #LOG.info(f"{obj.__str__()} for rsp.tm[{ndx}]:{tm} debiting {cost:.2f}")
             new_balance = new_balance - cost
             total_current = total_current + Decimal(cost) # for logging convenience
         ndx = ndx + 1
     if fytd_changed:  # use flag (avoid compare of float type?)
-        LOG.info(f"{org.name} is debited (tm_fmt:{tm_fmt_to_use}) up to {datetime.strftime(org.most_recent_charge_time, FMT)} {total_current} with new new_fytd_accrued_cost:{new_fytd_accrued_cost:.2f}")
+        LOG.info(f"{obj.__str__()} is debited (tm_fmt:{tm_fmt_to_use}) up to {datetime.strftime(obj.budget.most_recent_charge_time, FMT)} {total_current} with new new_fytd_accrued_cost:{new_fytd_accrued_cost:.2f}")
     else:
-        LOG.info(f"{org.name} is debited (tm_fmt:{tm_fmt_to_use}) up to {datetime.strftime(org.most_recent_charge_time, FMT)} NO CHANGE fytd:{org.fytd_accrued_cost:.2f}")
+        LOG.info(f"{obj.__str__()} is debited (tm_fmt:{tm_fmt_to_use}) up to {datetime.strftime(obj.budget.most_recent_charge_time, FMT)} NO CHANGE fytd:{obj.budget.fytd_accrued_cost:.2f}")
     if bal_changed:  # use flag (avoid compare of float type?)
-        LOG.info(f"{org.name} is debited (tm_fmt:{tm_fmt_to_use}) {total_current:.2f} up to {datetime.strftime(org.most_recent_charge_time, FMT)} with new balance:{new_balance:.2f}")
+        LOG.info(f"{obj.__str__()} is debited (tm_fmt:{tm_fmt_to_use}) {total_current:.2f} up to {datetime.strftime(obj.budget.most_recent_charge_time, FMT)} with new balance:{new_balance:.2f}")
     else:
-        LOG.info(f"{org.name} is debited (tm_fmt:{tm_fmt_to_use}) up to {datetime.strftime(org.most_recent_charge_time, FMT)} NO CHANGE balance:{org.balance:.2f}")
+        LOG.info(f"{obj.__str__()} is debited (tm_fmt:{tm_fmt_to_use}) up to {datetime.strftime(obj.budget.most_recent_charge_time, FMT)} NO CHANGE balance:{obj.budget.balance:.2f}")
     return new_balance,new_fytd_accrued_cost,new_mrct
 
 def get_tm_now_tuple():
@@ -780,6 +787,34 @@ def get_tm_now_tuple():
     return time_now,time_now_str
 
 def reconcile_org(orgAccountObj):
+    '''
+    reconcile the budget for each cluster in the org
+    then reconcile the org budget
+    '''
+    clusters_qs = NodeGroup.objects.filter(org=orgAccountObj)
+    LOG.info("clusters_qs:%s", repr(clusters_qs))
+    for c in clusters_qs:
+        reconcile_budget(c.budget)
+    # TBD: reconcile the org budget
+
+
+def reconcile_budget(budgetObj):
+    '''
+    This routine reconciles the budget for a cluster or org
+    '''
+    parent_name = ''
+    parentObj = budgetObj.content_object
+    parent_name = parentObj.__str__()
+    org_name = ''
+    cluster_name = ''
+    if isinstance(budgetObj,OrgAccount):
+        org_name = parent_name
+        LOG.info(f"reconcile_budget for OrgAccount:{parent_name}")
+    elif isinstance(budgetObj,NodeGroup):
+        org_name = budgetObj.org.name
+        cluster_name = budgetObj.name
+        LOG.info(f"reconcile_budget for NodeGroup:{parent_name}")
+        parent_name = budgetObj.org.name
     time_now,time_now_str = get_tm_now_tuple()
     global FMT, FMT_Z, FMT_DAILY
     with ps_client.create_client_channel("account") as channel:
@@ -790,104 +825,113 @@ def reconcile_org(orgAccountObj):
                                                 minute=0,
                                                 second=0,
                                                 microsecond=0)
-        LOG.info(f"{orgAccountObj.name} now:{time_now_str} start_of_this_month:{start_of_this_month.strftime('%Y-%m-%d %H:%M:%S')} orgAccountObj.most_recent_credit_time:{orgAccountObj.most_recent_credit_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        if start_of_this_month > orgAccountObj.most_recent_credit_time:
+        LOG.info(f"{parent_name} now:{time_now_str} start_of_this_month:{start_of_this_month.strftime('%Y-%m-%d %H:%M:%S')} budgetObj.most_recent_credit_time:{budgetObj.most_recent_credit_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        if start_of_this_month > budgetObj.most_recent_credit_time:
             # only ever give one month's credit
-            orgAccountObj.balance = orgAccountObj.balance + orgAccountObj.monthly_allowance
-            orgAccountObj.most_recent_credit_time = start_of_this_month
-            LOG.info(f"{orgAccountObj.name} is credited up to {datetime.strftime(orgAccountObj.most_recent_credit_time, FMT)} with NEW balance:{orgAccountObj.balance:.2f} using {orgAccountObj.monthly_allowance:.2f} added")
+            budgetObj.balance = budgetObj.balance + budgetObj.monthly_allowance
+            budgetObj.most_recent_credit_time = start_of_this_month
+            LOG.info(f"{budgetObj.org.name} is credited up to {datetime.strftime(budgetObj.most_recent_credit_time, FMT)} with NEW balance:{budgetObj.balance:.2f} using {budgetObj.monthly_allowance:.2f} added")
         else:
-            LOG.info(f"{orgAccountObj.name} is credited up to {datetime.strftime(orgAccountObj.most_recent_credit_time, FMT)} with NO CHANGE in balance:{orgAccountObj.balance:.2f} (nothing new to credit)")
+            LOG.info(f"{budgetObj.org.name} is credited up to {datetime.strftime(budgetObj.most_recent_credit_time, FMT)} with NO CHANGE in balance:{budgetObj.balance:.2f} (nothing new to credit)")
         #
         # For Charges:
         # First charge every day until midnight last night, then do hourly of today
         #
         # truncating to start of day (i.e. uncharged days)
         start_of_today = time_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        LOG.info(f"{orgAccountObj.name} now:{time_now_str} orgAccountObj.most_recent_charge_time:{orgAccountObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')} start_of_today:{start_of_today.strftime('%Y-%m-%d %H:%M:%S')}")
-        if orgAccountObj.most_recent_charge_time < start_of_today:
+        LOG.info(f"{budgetObj.org.name} now:{time_now_str} budgetObj.most_recent_charge_time:{budgetObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')} start_of_today:{start_of_today.strftime('%Y-%m-%d %H:%M:%S')}")
+        if budgetObj.most_recent_charge_time < start_of_today:
             # check if there are charges posted yet 
-            start_tm_str    = datetime.strftime(orgAccountObj.most_recent_charge_time, FMT_Z)
+            start_tm_str    = datetime.strftime(budgetObj.most_recent_charge_time, FMT_Z)
             end_tm_str      = time_now_str
             #
             #  These are the Daily charges until midnight last night
             #  below is the Hourly for today
             #
-            LOG.info(f"{orgAccountObj.name} now:{time_now_str} start_tm_str:{start_tm_str} end_tm_str:{end_tm_str}")
-            rsp = ac.DailyHistCost(ps_server_pb2.DailyHistCostReq(name=orgAccountObj.name, start_tm=start_tm_str, end_tm=end_tm_str))
+            LOG.info(f"{parent_name} now:{time_now_str} start_tm_str:{start_tm_str} end_tm_str:{end_tm_str}")
+            rsp = ac.DailyHistCost(ps_server_pb2.DailyHistCostReq(name=clusterObj.org.name, cluster_name=clusterObj.name, start_tm=start_tm_str, end_tm=end_tm_str))
             if rsp.server_error:
-                LOG.error(f"{orgAccountObj.name} DailyHistCost got this error:{rsp.error_msg}")
+                LOG.error(f"{parent_name} DailyHistCost got this error:{rsp.error_msg}")
                 raise Exception(f"ps server error caught:{rsp.error_msg}")            
             if len(rsp.tm) > 0:
-                new_balance,new_fytd_accrued_cost,new_mrct = calculate_account_bal_and_fytd_bal(orgAccountObj,rsp)
-                #LOG.info(f"orgAccountObj.balance:{orgAccountObj.balance} new_balance:{new_balance}")
-                if orgAccountObj.balance != new_balance:
-                    orgAccountObj.balance = new_balance
-                #LOG.info(f"orgAccountObj.fytd_accrued_cost:{orgAccountObj.fytd_accrued_cost} new_fytd_accrued_cost:{new_fytd_accrued_cost}")
-                if orgAccountObj.fytd_accrued_cost != new_fytd_accrued_cost:
-                    orgAccountObj.fytd_accrued_cost = new_fytd_accrued_cost
-                #LOG.info(f"orgAccountObj.most_recent_charge_time:{orgAccountObj.most_recent_charge_time} new_mrct:{new_mrct}")
-                if orgAccountObj.most_recent_charge_time != new_mrct:
-                    LOG.info(f"####### {orgAccountObj.name} updating orgAccountObj.most_recent_charge_time:{orgAccountObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')}-->{new_mrct.strftime('%Y-%m-%d %H:%M:%S')} from DailyHistCost")
-                    orgAccountObj.most_recent_charge_time = new_mrct
-                orgAccountObj.save(update_fields=['balance','most_recent_charge_time','fytd_accrued_cost'])
+                new_balance,new_fytd_accrued_cost,new_mrct = calculate_account_bal_and_fytd_bal(clusterObj,rsp)
+                #LOG.info(f"budgetObj.balance:{budgetObj.balance} new_balance:{new_balance}")
+                if budgetObj.balance != new_balance:
+                    budgetObj.balance = new_balance
+                #LOG.info(f"budgetObj.fytd_accrued_cost:{budgetObj.fytd_accrued_cost} new_fytd_accrued_cost:{new_fytd_accrued_cost}")
+                if budgetObj.fytd_accrued_cost != new_fytd_accrued_cost:
+                    budgetObj.fytd_accrued_cost = new_fytd_accrued_cost
+                #LOG.info(f"budgetObj.most_recent_charge_time:{budgetObj.most_recent_charge_time} new_mrct:{new_mrct}")
+                if budgetObj.most_recent_charge_time != new_mrct:
+                    LOG.info(f"####### {parent_name} updating budgetObj.most_recent_charge_time:{budgetObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')}-->{new_mrct.strftime('%Y-%m-%d %H:%M:%S')} from DailyHistCost")
+                    budgetObj.most_recent_charge_time = new_mrct
+                budgetObj.save()
             else:
-                LOG.info(f"{orgAccountObj.name} DID NOT change because there were no charges between  orgAccountObj.most_recent_charge_time:{orgAccountObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')} and beginning of today:{datetime.strftime(start_of_today,FMT)} it is debited up to {datetime.strftime(orgAccountObj.most_recent_charge_time,FMT)} NO CHANGE balance:{orgAccountObj.balance:.2f} (Cost Explorer report came back empty?)")
+                LOG.info(f"{parent_name} DID NOT change because there were no charges between  budgetObj.most_recent_charge_time:{budgetObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')} and beginning of today:{datetime.strftime(start_of_today,FMT)} it is debited up to {datetime.strftime(budgetObj.most_recent_charge_time,FMT)} NO CHANGE balance:{budgetObj.balance:.2f} (Cost Explorer report came back empty?)")
         else:
-            LOG.info(f"{orgAccountObj.name} is ALREADY debited daily mrct:{orgAccountObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')} up to start_of_today:{start_of_today.strftime('%Y-%m-%d %H:%M:%S')} NO CHANGE balance:%f (No new daily amounts to debit)")
+            LOG.info(f"{parent_name} is ALREADY debited daily mrct:{budgetObj.most_recent_charge_time.strftime('%Y-%m-%d %H:%M:%S')} up to start_of_today:{start_of_today.strftime('%Y-%m-%d %H:%M:%S')} NO CHANGE balance:%f (No new daily amounts to debit)")
         #
         #  Now do hourly 
         #
         start_of_this_hour = time_now.replace(minute=0, second=0, microsecond=0)
-        #LOG.info(f"orgAccountObj.most_recent_charge_time:{orgAccountObj.most_recent_charge_time} start_of_this_hour:{start_of_this_hour}")
-        if orgAccountObj.most_recent_charge_time < start_of_this_hour:
-            LOG.info(f"calling TodaysCost with {orgAccountObj.name} time_now_str:{time_now_str}")
-            rsp = ac.TodaysCost(ps_server_pb2.TodaysCostReq(name=orgAccountObj.name,tm=time_now_str))
+        #LOG.info(f"budgetObj.most_recent_charge_time:{budgetObj.most_recent_charge_time} start_of_this_hour:{start_of_this_hour}")
+        if budgetObj.most_recent_charge_time < start_of_this_hour:
+            LOG.info(f"calling TodaysCost with {parent_name} time_now_str:{time_now_str}")
+            rsp = ac.TodaysCost(ps_server_pb2.TodaysCostReq(name=org_name, cluster_name=cluster_name, tm=time_now_str))
             if rsp.server_error:
-                LOG.error(f"{orgAccountObj.name} TodaysCost got this error:{rsp.error_msg}")
+                LOG.error(f"{parent_name} TodaysCost got this error:{rsp.error_msg}")
                 raise Exception(f"ps server error caught:{rsp.error_msg}")            
             LOG.info(f"len(rsp.tm):{len(rsp.tm)}")
             if len(rsp.tm) > 0:
-                new_balance,new_fytd_accrued_cost,new_mrct = calculate_account_bal_and_fytd_bal(orgAccountObj,rsp)
-                #LOG.info(f"orgAccountObj.balance:{orgAccountObj.balance} new_balance:{new_balance}")
-                if orgAccountObj.balance != new_balance:
-                    orgAccountObj.balance = new_balance
-                #LOG.info(f"orgAccountObj.fytd_accrued_cost:{orgAccountObj.fytd_accrued_cost} new_fytd_accrued_cost:{new_fytd_accrued_cost}")
-                if orgAccountObj.fytd_accrued_cost != new_fytd_accrued_cost:
-                    orgAccountObj.fytd_accrued_cost = new_fytd_accrued_cost
-                #LOG.info(f"orgAccountObj.most_recent_charge_time:{orgAccountObj.most_recent_charge_time} new_mrct:{new_mrct}")
-                if orgAccountObj.most_recent_charge_time != new_mrct:
-                    orgAccountObj.most_recent_charge_time = new_mrct
-                    LOG.info(f"####### {orgAccountObj.name} updating mrct:{orgAccountObj.most_recent_charge_time} from TodaysCost")
-                orgAccountObj.save(update_fields=['balance','most_recent_charge_time','fytd_accrued_cost'])
+                new_balance,new_fytd_accrued_cost,new_mrct = calculate_account_bal_and_fytd_bal(budgetObj,rsp)
+                #LOG.info(f"budgetObj.balance:{budgetObj.balance} new_balance:{new_balance}")
+                if budgetObj.balance != new_balance:
+                    budgetObj.balance = new_balance
+                #LOG.info(f"budgetObj.fytd_accrued_cost:{budgetObj.fytd_accrued_cost} new_fytd_accrued_cost:{new_fytd_accrued_cost}")
+                if budgetObj.fytd_accrued_cost != new_fytd_accrued_cost:
+                    budgetObj.fytd_accrued_cost = new_fytd_accrued_cost
+                #LOG.info(f"budgetObj.most_recent_charge_time:{budgetObj.most_recent_charge_time} new_mrct:{new_mrct}")
+                if budgetObj.most_recent_charge_time != new_mrct:
+                    budgetObj.most_recent_charge_time = new_mrct
+                    LOG.info(f"####### {parent_name} updating mrct:{budgetObj.most_recent_charge_time} from TodaysCost")
+                clusterObj.save()
             else:
-                LOG.info(f"{orgAccountObj.name} is debited hourly up to {datetime.strftime(orgAccountObj.most_recent_charge_time, FMT)} NO CHANGE balance:{orgAccountObj.balance:.2f}")
+                LOG.info(f"{parent_name} is debited hourly up to {datetime.strftime(budgetObj.most_recent_charge_time, FMT)} NO CHANGE balance:{budgetObj.balance:.2f}")
         else:
-            LOG.info(f"{orgAccountObj.name} is ALREADY debited hourly mrct:{orgAccountObj.most_recent_credit_time} up to {datetime.strftime(start_of_this_hour,FMT)} NO CHANGE balance:{orgAccountObj.balance:.2f} (No new hourly amounts to debit)")
+            LOG.info(f"{parent_name} is ALREADY debited hourly mrct:{budgetObj.most_recent_credit_time} up to {datetime.strftime(start_of_this_hour,FMT)} NO CHANGE balance:{budgetObj.balance:.2f} (No new hourly amounts to debit)")
         #
         # Truncate to max allowed balance
         #
-        if orgAccountObj.balance > orgAccountObj.max_allowance:
-            orgAccountObj.balance = orgAccountObj.max_allowance
-            orgAccountObj.save(update_fields=['balance'])
-            LOG.info(f"{orgAccountObj.name} truncating balance to max_allowance:{orgAccountObj.max_allowance:.2f}")
+        if budgetObj.balance > budgetObj.max_allowance:
+            budgetObj.balance = budgetObj.max_allowance
+            budgetObj.save()
+            LOG.info(f"{parent_name} truncating balance to max_allowance:{budgetObj.max_allowance:.2f}")
     LOG.info("---done---")
 
-def is_org_broke(orgAccountObj):
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+def is_budget_broke(budgetObj):
+    parentObj = budgetObj.content_object
+    parent_name = parentObj.__str__()
+    if(budgetObj.balance < 0.5):
+        LOG.info(f"{parent_name} is broke with remaining balance of:{budgetObj.balance:.2f}")
+        broke_status = True
+    else:
+        LOG.info(f"{parent_name} has a remaining balance of:{budgetObj.balance:.2f}")
+    return broke_status
+
+def is_cluster_broke(clusterObj):
     broke_status = False 
     if(clusterObj.is_deployed):
-        if(clusterObj.org.balance < 0.5):
-            LOG.info(f"Should destroy {clusterObj.org.name} with remaining balance of:{clusterObj.org.balance:.2f}")
-            broke_status = True
-        else:
-            LOG.info(f"{clusterObj.org.name} has a remaining balance of:{clusterObj.org.balance:.2f}")
+        broke_status = is_budget_broke(clusterObj.budget)
     else:
-        LOG.info(f"{clusterObj.org.name} deployed_state is {clusterObj.deployed_state}")
+        LOG.info(f"{clusterObj} deployed_state is {clusterObj.deployed_state}")
     return broke_status
 
 
-def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hourly_days_to_forecast=None):
+def is_org_broke(orgAccountObj):
+    return is_budget_broke(orgAccountObj.budget)
+
+
+def create_forecast(budgetObj, hourlyRate, daily_days_to_forecast=None, hourly_days_to_forecast=None):
     ''' 
         This routine calculates hourly,daily,and monthly forecasts for a given hourly rate.
         The tm represents the start time of the given period
@@ -895,26 +939,26 @@ def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hour
 
     daily_days_to_forecast = daily_days_to_forecast or 91
     hourly_days_to_forecast = hourly_days_to_forecast or 14
-    #LOG.info("%s %2g", orgAccountObj.name, hrlyRate)
+    #LOG.info("%s %2g", {clusterObj} {hrlyRate})
     global FMT_HOURLY, FMT_DAILY
     A_LONG_TIME_FROM_NOW = datetime.now(timezone.utc) + timedelta(days=DISPLAY_EXP_TM+DISPLAY_EXP_TM_MARGIN)
     drop_dead_time = A_LONG_TIME_FROM_NOW
     hrlyRate = float(hourlyRate)
-    days_of_week,num_days_in_month = calendar.monthrange(orgAccountObj.most_recent_recon_time.year, orgAccountObj.most_recent_recon_time.month)
+    days_of_week,num_days_in_month = calendar.monthrange(budgetObj.most_recent_recon_time.year, budgetObj.most_recent_recon_time.month)
     ############# HOURLY #############
     tms = []
     bals = []
     tm_bal_tuple = []
-    fraction_of_hr = (59.0-orgAccountObj.most_recent_recon_time.minute)/60.0 # mins are 0-59
+    fraction_of_hr = (59.0-budgetObj.most_recent_recon_time.minute)/60.0 # mins are 0-59
     partial_hr_mins_charge = hourlyRate*(fraction_of_hr)
-    hr_to_start = (orgAccountObj.most_recent_recon_time + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0) 
+    hr_to_start = (budgetObj.most_recent_recon_time + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0) 
     tm = hr_to_start
-    bal = float(orgAccountObj.balance)-partial_hr_mins_charge
+    bal = float(budgetObj.balance)-partial_hr_mins_charge
     # tbd fraction of first hour?
     while tm < (hr_to_start + timedelta(days=hourly_days_to_forecast)):
         #LOG.info(f"tm:{tm}")
         if tm.day == 1 and tm.hour == 0:
-            bal = bal + float(orgAccountObj.monthly_allowance)
+            bal = bal + float(budgetObj.monthly_allowance)
         bals.append(bal)
         formatted_tm = datetime.strftime(tm, FMT_HOURLY)
         tms.append(formatted_tm)
@@ -931,14 +975,14 @@ def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hour
     tms = []
     bals = []
     tm_bal_tuple = []
-    partial_day_hrly_charge = (23-orgAccountObj.most_recent_recon_time.hour)*hrlyRate # hrs are 0-23
+    partial_day_hrly_charge = (23-budgetObj.most_recent_recon_time.hour)*hrlyRate # hrs are 0-23
     # day_to_start is begining of first whole day
-    day_to_start = orgAccountObj.most_recent_recon_time.replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)    
+    day_to_start = budgetObj.most_recent_recon_time.replace(hour=0,minute=0,second=0,microsecond=0) + timedelta(days=1)    
     tm = day_to_start
-    bal = float(orgAccountObj.balance) - partial_day_hrly_charge
+    bal = float(budgetObj.balance) - partial_day_hrly_charge
     while tm < (day_to_start + timedelta(days=daily_days_to_forecast)):
         if tm.day == 1:
-            bal = bal + float(orgAccountObj.monthly_allowance)
+            bal = bal + float(budgetObj.monthly_allowance)
         bals.append(bal)
         formatted_tm = datetime.strftime(tm, FMT_DAILY)
         tms.append(formatted_tm)
@@ -958,7 +1002,7 @@ def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hour
     bals = []
     tm_bal_tuple = []
     weekday,num_days_in_month = calendar.monthrange(day_to_start.year, day_to_start.month)
-    bal = float(orgAccountObj.balance) - partial_day_charge
+    bal = float(budgetObj.balance) - partial_day_charge
     day = day_to_start.day  # 
     tm = day_to_start  # beginning of first full day
     if bal < 0:
@@ -972,7 +1016,7 @@ def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hour
     tm_bal_tuple.append((formatted_tm,bal))
     while day <= num_days_in_month:  # 1 based - partial month
         if day == 1:
-            bal = bal + float(orgAccountObj.monthly_allowance)
+            bal = bal + float(budgetObj.monthly_allowance)
         bal = bal - (hrlyRate*24)
         if bal < 0.00:
             if tm < drop_dead_time:
@@ -985,7 +1029,7 @@ def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hour
     while tm < (start_tm + timedelta(days=365)):
         # current month
         weekday,num_days_in_month = calendar.monthrange(tm.year,tm.month) # one month at a time
-        bal = bal + float(orgAccountObj.monthly_allowance)
+        bal = bal + float(budgetObj.monthly_allowance)
         bal = bal - (num_days_in_month*hrlyRate*24)
         if bal < 0.00:
             if tm < drop_dead_time:
@@ -1002,72 +1046,87 @@ def create_forecast(orgAccountObj, hourlyRate, daily_days_to_forecast=None, hour
     fc_monthly_tm_bal = json.dumps(tm_bal_tuple)
     return drop_dead_time, fc_hourly, fc_daily, fc_monthly, fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal
 
-def create_all_forecasts(orgAccountObj):
-    update_cur_num_nodes(orgAccountObj)
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
-    LOG.info(f"Hourly burn rates: {orgAccountObj.min_hrly}/{orgAccountObj.cur_hrly}/{orgAccountObj.max_hrly}")
+def create_all_forecasts(clusterObj):
+    update_cur_num_nodes(clusterObj)
+    LOG.info(f"Hourly burn rates: {clusterObj.min_hrly}/{clusterObj.cur_hrly}/{clusterObj.max_hrly}")
 
-    orgAccountObj.min_ddt, orgAccountObj.fc_min_hourly, orgAccountObj.fc_min_daily, orgAccountObj.fc_min_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal  = create_forecast(orgAccountObj, orgAccountObj.min_hrly)
+    clusterObj.min_ddt, clusterObj.fc_min_hourly, clusterObj.fc_min_daily, clusterObj.fc_min_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal  = create_forecast(clusterObj, clusterObj.min_hrly)
     #LOG.info(f"MIN fc_hourly_tm_bal:{fc_hourly_tm_bal} fc_daily_tm_bal:{fc_daily_tm_bal} fc_monthly_tm_bal:{fc_monthly_tm_bal} ")
-    #LOG.info(f"MIN min_ddt:{orgAccountObj.min_ddt.strftime(FMT)} fc_min_hourly:{orgAccountObj.fc_min_hourly},fc_min_daily:{orgAccountObj.fc_min_daily},fc_min_monthly:{orgAccountObj.fc_min_monthly}")
-    orgAccountObj.cur_ddt, orgAccountObj.fc_cur_hourly, orgAccountObj.fc_cur_daily, orgAccountObj.fc_cur_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(orgAccountObj, orgAccountObj.cur_hrly)
+    #LOG.info(f"MIN min_ddt:{clusterObj.min_ddt.strftime(FMT)} fc_min_hourly:{clusterObj.fc_min_hourly},fc_min_daily:{clusterObj.fc_min_daily},fc_min_monthly:{clusterObj.fc_min_monthly}")
+    clusterObj.cur_ddt, clusterObj.fc_cur_hourly, clusterObj.fc_cur_daily, clusterObj.fc_cur_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(clusterObj, clusterObj.cur_hrly)
     #LOG.info(f"CUR fc_hourly_tm_bal:{fc_hourly_tm_bal} fc_daily_tm_bal:{fc_daily_tm_bal} fc_monthly_tm_bal:{fc_monthly_tm_bal} ")
-    #LOG.info(f"CUR cur_ddt:{orgAccountObj.cur_ddt.strftime(FMT)} fc_cur_hourly:{orgAccountObj.fc_cur_hourly},fc_cur_daily:{orgAccountObj.fc_cur_daily},fc_cur_monthly:{orgAccountObj.fc_cur_monthly}")
-    orgAccountObj.max_ddt, orgAccountObj.fc_max_hourly, orgAccountObj.fc_max_daily, orgAccountObj.fc_max_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(orgAccountObj, orgAccountObj.max_hrly)
+    #LOG.info(f"CUR cur_ddt:{clusterObj.cur_ddt.strftime(FMT)} fc_cur_hourly:{clusterObj.fc_cur_hourly},fc_cur_daily:{clusterObj.fc_cur_daily},fc_cur_monthly:{clusterObj.fc_cur_monthly}")
+    clusterObj.max_ddt, clusterObj.fc_max_hourly, clusterObj.fc_max_daily, clusterObj.fc_max_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(clusterObj, clusterObj.max_hrly)
     #LOG.info(f"MAX fc_hourly_tm_bal:{fc_hourly_tm_bal} fc_daily_tm_bal:{fc_daily_tm_bal} fc_monthly_tm_bal:{fc_monthly_tm_bal} ")
-    #LOG.info(f"MAX max_ddt:{orgAccountObj.max_ddt.strftime(FMT)} fc_max_hourly:{orgAccountObj.fc_max_hourly},fc_max_daily:{orgAccountObj.fc_max_daily},fc_max_monthly:{orgAccountObj.fc_max_monthly}")
+    #LOG.info(f"MAX max_ddt:{clusterObj.max_ddt.strftime(FMT)} fc_max_hourly:{clusterObj.fc_max_hourly},fc_max_daily:{clusterObj.fc_max_daily},fc_max_monthly:{clusterObj.fc_max_monthly}")
 
-    LOG.info(f"min_ddt:{orgAccountObj.min_ddt.strftime(FMT)},cur_ddt:{orgAccountObj.cur_ddt.strftime(FMT)},max_ddt:{orgAccountObj.max_ddt.strftime(FMT)}")
-    orgAccountObj.save(update_fields=['min_ddt','cur_ddt','max_ddt','fc_min_hourly','fc_min_daily','fc_min_monthly','fc_cur_hourly','fc_cur_daily','fc_cur_monthly','fc_max_hourly','fc_max_daily','fc_max_monthly'])
-
-
-def create_all_forecasts_for_all_orgs():
-    orgs_qs = OrgAccount.objects.all()
-    LOG.info("orgs_qs:%s", repr(orgs_qs))
-    for o in orgs_qs:
-        create_all_forecasts(o)
-
-def ad_hoc_cost_reconcile_for_org(orgObj):
-    update_ccr(orgObj)
-    update_burn_rates(orgObj)
-    reconcile_org(orgObj)
-    create_all_forecasts(orgObj)
+    LOG.info(f"min_ddt:{clusterObj.min_ddt.strftime(FMT)},cur_ddt:{clusterObj.cur_ddt.strftime(FMT)},max_ddt:{clusterObj.max_ddt.strftime(FMT)}")
+    clusterObj.save(update_fields=['min_ddt','cur_ddt','max_ddt','fc_min_hourly','fc_min_daily','fc_min_monthly','fc_cur_hourly','fc_cur_daily','fc_cur_monthly','fc_max_hourly','fc_max_daily','fc_max_monthly'])
 
 
-@shared_task(name="force_ad_hoc_cost_reconcile_uuid",bind=True)  # name is referenced in settings.py
-def force_ad_hoc_cost_reconcile_uuid(self,uuid):
-    LOG.info(f"Started -- force_ad_hoc_cost_reconcile_uuid({uuid}) {self.request.id}")
-    orgObj = OrgAccount.objects.get(id=uuid)
-    ad_hoc_cost_reconcile_for_org(orgObj)
-    LOG.info(f"Finished -- force_ad_hoc_cost_reconcile_uuid({uuid}) {self.request.id}")
+# def create_all_forecasts_for_all_orgs():
+#     orgs_qs = OrgAccount.objects.all()
+#     LOG.info("orgs_qs:%s", repr(orgs_qs))
+#     for o in orgs_qs:
+#         create_all_forecasts(o)
+
+# def ad_hoc_cost_reconcile_for_org(orgObj):
+#     update_ccr(orgObj)
+#     update_burn_rates(orgObj)
+#     reconcile_org(orgObj)
+#     create_all_forecasts(orgObj)
 
 
-@shared_task(name="force_ad_hoc_cost_reconcile",bind=True)  # name is referenced in settings.py
-def force_ad_hoc_cost_reconcile(self):
-    LOG.info(f"Started -- force_ad_hoc_cost_reconcile {self.request.id}")
-    orgs_qs = OrgAccount.objects.all()
-    for orgObj in orgs_qs:
-        ad_hoc_cost_reconcile_for_org(orgObj)
-    LOG.info(f"Finished -- force_ad_hoc_cost_reconcile {self.request.id}")
+# @shared_task(name="force_ad_hoc_cost_reconcile_uuid",bind=True)  # name is referenced in settings.py
+# def force_ad_hoc_cost_reconcile_uuid(self,uuid):
+#     LOG.info(f"Started -- force_ad_hoc_cost_reconcile_uuid({uuid}) {self.request.id}")
+#     orgObj = OrgAccount.objects.get(id=uuid)
+#     ad_hoc_cost_reconcile_for_org(orgObj)
+#     LOG.info(f"Finished -- force_ad_hoc_cost_reconcile_uuid({uuid}) {self.request.id}")
 
-def cost_accounting(orgObj):
+
+# @shared_task(name="force_ad_hoc_cost_reconcile",bind=True)  # name is referenced in settings.py
+# def force_ad_hoc_cost_reconcile(self):
+#     LOG.info(f"Started -- force_ad_hoc_cost_reconcile {self.request.id}")
+#     orgs_qs = OrgAccount.objects.all()
+#     for orgObj in orgs_qs:
+#         ad_hoc_cost_reconcile_for_org(orgObj)
+#     LOG.info(f"Finished -- force_ad_hoc_cost_reconcile {self.request.id}")
+
+def cost_accounting_org(orgAccountObj):
     try:
-        if update_ccr(orgObj):
-            update_burn_rates(orgObj) # auto scaling changes num_nodes
-            create_all_forecasts(orgObj)
+        qs = NodeGroup.objects.filter(org=orgAccountObj)
+        for c in qs:
+            cost_accounting_cluster(c)
+            #sum all clusters for org
+            orgAccountObj.sum_asg.num += c.cur_asg.num
+            orgAccountObj.sum_asg.min += c.cur_asg.min
+            orgAccountObj.sum_asg.max += c.cur_asg.max
+
+        
+
     except Exception as e:
         LOG.exception("Error in cost_accounting: %s", repr(e))
 
-def find_broke_orgs():
-    orgs_qs = OrgAccount.objects.all()
-    LOG.info("orgs_qs:%s", repr(orgs_qs))
-    broke_orgs = []
-    for o in orgs_qs:
-        if is_org_broke(o):
-            broke_orgs.append(o)
-    return broke_orgs
+def cost_accounting_cluster(clusterObj):
+    try:
+        budgetObj = clusterObj.budget
+        if update_ccr(budgetObj):
+            update_burn_rates(budgetObj) # auto scaling changes num_nodes
+            create_all_forecasts(budgetObj)
+    except Exception as e:
+        LOG.exception("Error in cost_accounting: %s", repr(e))
 
-def get_cli_html(orgAccountObj, cli):
+def find_broke_clusters():
+    qs = NodeGroup.objects.all()
+    LOG.info("orgs_qs:%s", repr(qs))
+    broke_clusters = []
+    for c in qs:
+        if is_cluster_broke(c):
+            broke_clusters.append(c)
+    return broke_clusters
+
+def get_cli_html(cli):
     conv = Ansi2HTMLConverter(inline=True)
     console_html = ''
     if(cli.valid):
@@ -1082,10 +1141,10 @@ def get_cli_html(orgAccountObj, cli):
                 "".join(cli.stderr), full=False)
     return console_html
 
-def getConsoleHtml(orgAccountObj, rrsp):
+def getConsoleHtml(clusterObj, rrsp):
     console_html = ''
     try:
-        console_html = get_cli_html(orgAccountObj, rrsp.cli)
+        console_html = get_cli_html(rrsp.cli)
         if(rrsp.ps_server_error):
             LOG.error("Error in server:\n %s", rrsp.error_msg)
             rsp_status = 500
@@ -1096,33 +1155,32 @@ def getConsoleHtml(orgAccountObj, rrsp):
         LOG.exception("caught exception:")
         failed_cli = ps_server_pb2.cli_rsp(valid=False)
         rrsp = ps_server_pb2.Response(
-            done=True, name=orgAccountObj.name, cli=failed_cli)
+            done=True, name=clusterObj.org.name, cli=failed_cli)
         return 500, ps_server_pb2.PS_AjaxResponseData(rsp=rrsp, console_html=console_html, web_error=True, web_error_msg='caught exception in web server')
 
-def remove_num_node_requests(user,orgAccountObj,only_owned_by_user=None):
+def remove_num_node_requests(user,clusterObj,only_owned_by_user=None):
     try:
         only_owned_by_user = only_owned_by_user or False
-        LOG.info(f"{user.username} cleaning up OrgNumNode for {orgAccountObj.name} {f'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{OrgNumNode.objects.count()}")
+        LOG.info(f"{user.username} cleaning up ClusterNumNode for {clusterObj.org.name} {f'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{ClusterNumNode.objects.count()}")
         if only_owned_by_user:
-            onns = OrgNumNode.objects.filter(org=orgAccountObj,user=user)
+            cnns = ClusterNumNode.objects.filter(cluster=clusterObj,user=user)
         else:
-            onns = OrgNumNode.objects.filter(org=orgAccountObj)
-        clusterObj = Cluster.objects.get(org=orgAccountObj)
-        for onn in onns:
-            LOG.info(f"{onn.user.username} deleting OrgNumNode {onn.org.name}")
+            cnns = ClusterNumNode.objects.filter(cluster=clusterObj)
+        for cnn in cnns:
+            LOG.info(f"{cnn.user.username} deleting ClusterNumNode {cnn.org.name}")
             if clusterObj.cnnro_ids is not None:
-                if str(onn.id) in clusterObj.cnnro_ids:
-                    LOG.info(f"Skipping active OrgNumNode.id:{onn.id}")
+                if str(cnn.id) in clusterObj.cnnro_ids:
+                    LOG.info(f"Skipping active ClusterNumNode.id:{cnn.id}")
                 else:
-                    onn.delete()
+                    cnn.delete()
             else:
-                onn.delete()
-        jrsp = {'status': "SUCCESS","msg":f"{user.username} cleaned all PENDING org node reqs for {orgAccountObj.name} "}
-        LOG.info(f"{user.username} cleaned up OrgNumNode for {orgAccountObj.name} {'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{OrgNumNode.objects.count()}")
+                cnn.delete()
+        jrsp = {'status': "SUCCESS","msg":f"{user.username} cleaned all PENDING org node reqs for {clusterObj} "}
+        LOG.info(f"{user.username} cleaned up ClusterNumNode for {clusterObj} {'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{ClusterNumNode.objects.count()}")
         return jrsp
     except Exception as e:
         LOG.exception("caught exception:")
-        jrsp = {'status': "FAILED","error_msg":f"Server Error; Request by {user.username} to clean ALL org node reqs for {orgAccountObj.name} FAILED"}
+        jrsp = {'status': "FAILED","error_msg":f"Server Error; Request by {user.username} to clean ALL org node reqs for {clusterObj} FAILED"}
 
 def init_new_org_memberships(orgAccountObj):
     # automatically make owner an active member
@@ -1144,22 +1202,20 @@ def init_new_org_memberships(orgAccountObj):
                     m.user.first_name, m.user.last_name, m.user.username, m.org.name)
     return msg
 
-def ps_cmd_cleanup(orgAccountObj,st,org_cmd_str):
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+def ps_cmd_cleanup(clusterObj,st,org_cmd_str):
     clusterObj.active_ps_cmd = ''  # ALWAYS clear this!
     clusterObj.save(update_fields=['active_ps_cmd'])
-    update_cur_num_nodes(orgAccountObj)
+    update_cur_num_nodes(clusterObj)
     time_to_process = datetime.now(timezone.utc) - st
     time_to_process = time_to_process - timedelta(microseconds=time_to_process.microseconds)
     LOG.info(f"DONE {org_cmd_str} has completed in {str(time_to_process)}")
 
-def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_str, deploy_values=None, expire_time=None):
+def process_rsp_generator(clusterObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_str, deploy_values=None, expire_time=None):
     '''
     This function processes the response generator from the ps-server
         for Update, Refresh and Destroy commands. They all send the same response stream
     '''
     LOG.info(f"process_rsp_generator {org_cmd_str} {deploy_values if deploy_values is not None else ''} {expire_time.strftime(FMT) if expire_time is not None else ''}")
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
     clusterObj.active_ps_cmd = ps_cmd
     clusterObj.save(update_fields=['active_ps_cmd'])
     stopped = False
@@ -1178,25 +1234,25 @@ def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cm
                     LOG.error(f"{org_cmd_str} iter:<{iterations}> got None response from ps_server!")
                     stopped = True # if we get here then we got a None response from the ps_server
                 else:
-                    rsp_status, console_html = getConsoleHtml(orgAccountObj, rrsp)
+                    rsp_status, console_html = getConsoleHtml(clusterObj, rrsp)
                     psCmdResultObj.ps_cmd_output += console_html
                     psCmdResultObj.save()
                     if rrsp.state.valid:
                         LOG.info(f"{org_cmd_str} iter:<{iterations}> got valid state in rsp with state:{rrsp.state} using deploy_values:{deploy_values}")
                         if deploy_values:
-                            update_cur_num_nodes(orgAccountObj)
-                            clusterObj = Cluster.objects.get(org=orgAccountObj)
-                            clusterObj.cur_min_node_cap = deploy_values['min_node_cap']
-                            clusterObj.cur_max_node_cap = deploy_values['max_node_cap']
+                            update_cur_num_nodes(clusterObj) # this updates the cur_asg.num
+                            clusterObj.cur_asg.min= deploy_values['min_node_cap']
+                            clusterObj.cur_asg.max = deploy_values['max_node_cap']
                             clusterObj.cur_version = deploy_values['version']
+                            
                             clusterObj.is_public = deploy_values['is_public']
                             clusterObj.expire_time = expire_time
-                            clusterObj.save(update_fields=['cur_min_node_cap','cur_max_node_cap','cur_version','is_public','expire_time'])
-                            orgAccountObj.desired_num_nodes = int(deploy_values['desired_num_nodes'])
-                            orgAccountObj.save(update_fields=['desired_num_nodes'])
+                            # the cfg_asg.num is the desired num nodes and is only set upon a successful completion of an Update command
+                            clusterObj.cfg_asg.num = int(deploy_values['desired_num_nodes'])
+                            clusterObj.save(update_fields=['cur_asg','cur_version','is_public','expire_time'])
                         if ps_cmd == 'Destroy': # must set to zero so future desired node requests will always be differnt than current to trigger deploy
-                            orgAccountObj.desired_num_nodes = 0
-                            orgAccountObj.save(update_fields=['desired_num_nodes'])
+                            clusterObj.cfg_asg.num = 0
+                            clusterObj.save(update_fields=['asg'])
                         clusterObj.deployed_state = rrsp.state.deployed_state
                         clusterObj.is_deployed = rrsp.state.deployed
                         clusterObj.mgr_ip_address = rrsp.state.ip_address.replace('"', '')
@@ -1205,7 +1261,7 @@ def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cm
                         if not clusterObj.is_deployed:
                             clusterObj.cur_version = ''
                         clusterObj.save(update_fields=['deployed_state','is_deployed','cur_version','mgr_ip_address'])
-                        msg = f" Saving state of {orgAccountObj.name} cluster -> is_deployed:{clusterObj.is_deployed} deployed_state:{clusterObj.deployed_state} cur_version:{clusterObj.cur_version} mgr_ip_address:{clusterObj.mgr_ip_address}"
+                        msg = f" Saving state of {clusterObj.org.name} cluster -> is_deployed:{clusterObj.is_deployed} deployed_state:{clusterObj.deployed_state} cur_version:{clusterObj.cur_version} mgr_ip_address:{clusterObj.mgr_ip_address}"
                         LOG.info(msg)
                     if rrsp.ps_server_error:
                         got_ps_server_error = True
@@ -1220,8 +1276,8 @@ def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cm
                 stopped = True
                 if not got_ps_server_error:
                     LOG.info(f"{org_cmd_str} iter:<{iterations}> incrementing num_ps_cmd_successful")
-                    orgAccountObj.num_ps_cmd_successful += 1
-                    orgAccountObj.save(update_fields=['num_ps_cmd_successful'])
+                    clusterObj.num_ps_cmd_successful += 1
+                    clusterObj.save(update_fields=['num_ps_cmd_successful'])
                 psCmdResultObj.error = ''
                 psCmdResultObj.save(update_fields=['error'])
                 LOG.info(f"{org_cmd_str} iter:<{iterations}> got expected StopIteration exception")
@@ -1251,25 +1307,25 @@ def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cm
         raise ProvisionCmdError(f"{error_msg}:{str(e)}")
     LOG.info(f"{org_cmd_str} iter:<{iterations}> Done")
 
-def get_psCmdResultObj(orgAccountObj, ps_cmd, version=None, username=None, is_adhoc=False):
-    psCmdResultObj = PsCmdResult.objects.create(org=orgAccountObj)
+def get_psCmdResultObj(clusterObj, ps_cmd, version=None, username=None, is_adhoc=False):
+    psCmdResultObj = PsCmdResult.objects.create(cluster=clusterObj)
     psCmdResultObj.error = 'still processing'
     psCmdResultObj.ps_cmd_output = ''
     if is_adhoc:
-        psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {orgAccountObj.name} Ad-Hoc "
+        psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {clusterObj.org.name} Ad-Hoc "
     else:
         if ps_cmd == 'SetUp':
-            psCmdResultObj.ps_cmd_summary_label = f" --- Configure {orgAccountObj.name} "
+            psCmdResultObj.ps_cmd_summary_label = f" --- Configure {clusterObj.org.name} "
         else:
-            psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {orgAccountObj.name} "
+            psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {clusterObj.org.name} "
     if version is not None:
-        psCmdResultObj.ps_cmd_summary_label += f" with version {orgAccountObj.version}"
+        psCmdResultObj.ps_cmd_summary_label += f" with version {clusterObj.version}"
     psCmdResultObj.save()
     if ps_cmd == 'SetUp':
-        orgAccountObj.num_setup_cmd += 1
-        orgAccountObj.save(update_fields=['num_setup_cmd'])
-    orgAccountObj.num_ps_cmd += 1
-    orgAccountObj.save(update_fields=['num_ps_cmd'])
+        clusterObj.num_setup_cmd += 1
+        clusterObj.save(update_fields=['num_setup_cmd'])
+    clusterObj.num_ps_cmd += 1
+    clusterObj.save(update_fields=['num_ps_cmd'])
     if username is not None:
         try:
             get_user_model().objects.get(username=username)
@@ -1281,23 +1337,23 @@ def get_psCmdResultObj(orgAccountObj, ps_cmd, version=None, username=None, is_ad
         psCmdResultObj.ps_cmd_summary_label += f" {username}"
         psCmdResultObj.save()
 
-    org_cmd_str = f"{orgAccountObj.name} cmd-{orgAccountObj.num_ps_cmd}: {ps_cmd} {username if username is not None else ''}"
+    org_cmd_str = f"{clusterObj.org.name} cmd-{clusterObj.num_ps_cmd}: {ps_cmd} {username if username is not None else ''}"
     return psCmdResultObj,org_cmd_str
 
-def process_Update_cmd(orgAccountObj, username, deploy_values, expire_time):
+def process_Update_cmd(clusterObj, username, deploy_values, expire_time):
     global MIN_HRS_TO_LIVE_TO_START
     st = datetime.now(timezone.utc)
-    psCmdResultObj,org_cmd_str = get_psCmdResultObj(orgAccountObj=orgAccountObj,ps_cmd='Update')
-    LOG.info(f"STARTED {org_cmd_str} org.dnn:{orgAccountObj.desired_num_nodes} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} ")
+    psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj=clusterObj,ps_cmd='Update')
+    LOG.info(f"STARTED {org_cmd_str} org.dnn:{clusterObj.cfg_asg.num} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} ")
     try:
         try:
-            LOG.info(f"Update {orgAccountObj.name}")
+            LOG.info(f"Update {clusterObj.org.name}")
             psCmdResultObj.expiration = expire_time
             if psCmdResultObj.expiration is None or psCmdResultObj.expiration > datetime.now(timezone.utc):
-                cost_accounting(orgAccountObj) ## update DDT to check for broke orgs
-                LOG.info(f"Update {orgAccountObj.name} test times min_ddt:{orgAccountObj.min_ddt} max_ddt:{orgAccountObj.max_ddt} now:{datetime.now(timezone.utc)} MIN_HRS_TO_LIVE_TO_START:{timedelta(hours=MIN_HRS_TO_LIVE_TO_START)}")
-                if (orgAccountObj.max_ddt - datetime.now(timezone.utc)) < timedelta(hours=MIN_HRS_TO_LIVE_TO_START):
-                    emsg = f"cluster:{orgAccountObj.name} Raise LowBalanceError ddt:{orgAccountObj.max_ddt.strftime(FMT)}"
+                cost_accounting(clusterObj) ## update DDT to check for broke orgs
+                LOG.info(f"Update {clusterObj.org.name} test times min_ddt:{clusterObj.min_ddt} max_ddt:{clusterObj.max_ddt} now:{datetime.now(timezone.utc)} MIN_HRS_TO_LIVE_TO_START:{timedelta(hours=MIN_HRS_TO_LIVE_TO_START)}")
+                if (clusterObj.max_ddt - datetime.now(timezone.utc)) < timedelta(hours=MIN_HRS_TO_LIVE_TO_START):
+                    emsg = f"cluster:{clusterObj.org.name} Raise LowBalanceError ddt:{clusterObj.max_ddt.strftime(FMT)}"
                     LOG.warning(emsg)
                     raise LowBalanceError(message=emsg)
             # add username to label being displayed 
@@ -1313,13 +1369,13 @@ def process_Update_cmd(orgAccountObj, username, deploy_values, expire_time):
                     LOG.info("Setting num_nodes_to_use to zero (i.e. deploy load balancer and monitor only)")
                 rsp_gen = stub.Update(
                     ps_server_pb2.UpdateRequest(
-                        name    = orgAccountObj.name,
+                        name    = clusterObj.org.name,
                         min_nodes   = int(deploy_values['min_node_cap']),
                         max_nodes   = int(deploy_values['max_node_cap']),
                         num_nodes   = int(deploy_values['desired_num_nodes']),
                         now=datetime.now(timezone.utc).strftime(FMT)),
                         timeout=timeout)
-                process_rsp_generator(  orgAccountObj=orgAccountObj,
+                process_rsp_generator(  clusterObj=clusterObj,
                                         ps_cmd='Update', 
                                         rsp_gen=rsp_gen, 
                                         psCmdResultObj=psCmdResultObj, 
@@ -1327,7 +1383,7 @@ def process_Update_cmd(orgAccountObj, username, deploy_values, expire_time):
                                         deploy_values=deploy_values, 
                                         expire_time=expire_time)
         except LowBalanceError as e:
-            error_msg = f"{org_cmd_str} Low Balance Error: The account balance ({str(orgAccountObj.balance)}) of this organization is too low.The auto-shutdown time is {str(orgAccountObj.min_ddt)}  Check with the support team for assistance. Can NOT deploy with less than 8 hrs left until automatic shutdown"
+            error_msg = f"{org_cmd_str} Low Balance Error: The account balance ({str(clusterObj.balance)}) of this organization is too low.The auto-shutdown time is {str(clusterObj.min_ddt)}  Check with the support team for assistance. Can NOT deploy with less than 8 hrs left until automatic shutdown"
             LOG.warning(error_msg)
             psCmdResultObj.error = error_msg
             psCmdResultObj.save()
@@ -1339,34 +1395,34 @@ def process_Update_cmd(orgAccountObj, username, deploy_values, expire_time):
             raise e
         else:
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- Update {orgAccountObj.name}"
+            psCmdResultObj.ps_cmd_summary_label = f" --- Update {clusterObj.org.name}"
             psCmdResultObj.ps_cmd_summary_label += f" {username}"
             psCmdResultObj.save()
             raise ProvisionCmdError(f"An error occurred during command processing. {error_msg}")
     finally:
-        long_str=f"{org_cmd_str} org.dnn:{orgAccountObj.desired_num_nodes} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} "
-        ps_cmd_cleanup(orgAccountObj,st,long_str)
+        long_str=f"{org_cmd_str} org.dnn:{clusterObj.cfg_asg.num} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} "
+        ps_cmd_cleanup(clusterObj,st,long_str)
         for handler in LOG.handlers:
             handler.flush()
 
-def process_Refresh_cmd(orgAccountObj, username=None, owner_ps_cmd=None):
+def process_Refresh_cmd(clusterObj, username=None, owner_ps_cmd=None):
     global MIN_HRS_TO_LIVE_TO_START
     st = datetime.now(timezone.utc)
     is_ad_hoc = owner_ps_cmd is not None
-    psCmdResultObj,org_cmd_str = get_psCmdResultObj(orgAccountObj=orgAccountObj,ps_cmd='Refresh', username=username, is_adhoc=is_ad_hoc)
+    psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj=clusterObj,ps_cmd='Refresh', username=username, is_adhoc=is_ad_hoc)
     LOG.info(f"STARTED {org_cmd_str}")
     try:
         # need to update
         with ps_client.create_client_channel("control") as channel:
             stub = ps_server_pb2_grpc.ControlStub(channel)
             timeout= int(os.environ.get("GRPC_TIMEOUT_SECS",900))
-            LOG.info(f"gRpc: Refresh {orgAccountObj.name} timeout:{timeout}")
+            LOG.info(f"gRpc: Refresh {clusterObj.org.name} timeout:{timeout}")
             rsp_gen = stub.Refresh(
                 ps_server_pb2.RefreshRequest(
-                    name=orgAccountObj.name,
+                    name=clusterObj.org.name,
                     now=datetime.now(timezone.utc).strftime(FMT)),
                     timeout=timeout)
-            process_rsp_generator(orgAccountObj=orgAccountObj, 
+            process_rsp_generator(clusterObj=clusterObj, 
                                   ps_cmd='Refresh', 
                                   rsp_gen=rsp_gen, 
                                   psCmdResultObj=psCmdResultObj, 
@@ -1378,7 +1434,7 @@ def process_Refresh_cmd(orgAccountObj, username=None, owner_ps_cmd=None):
             raise e
         else:
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- 'Refresh' {orgAccountObj.name}"
+            psCmdResultObj.ps_cmd_summary_label = f" --- 'Refresh' {clusterObj.org.name}"
             if username is not None:
                 psCmdResultObj.ps_cmd_summary_label += f" {username}"
             psCmdResultObj.save()
@@ -1386,27 +1442,27 @@ def process_Refresh_cmd(orgAccountObj, username=None, owner_ps_cmd=None):
     finally:
         if owner_ps_cmd is not None:
             OwnerPSCmd.objects.get(id=owner_ps_cmd.id).delete()
-        ps_cmd_cleanup(orgAccountObj,st,org_cmd_str)
+        ps_cmd_cleanup(clusterObj,st,org_cmd_str)
         for handler in LOG.handlers:
             handler.flush()
 
-def process_Destroy_cmd(orgAccountObj, username=None, owner_ps_cmd=None):
+def process_Destroy_cmd(clusterObj, username=None, owner_ps_cmd=None):
     global MIN_HRS_TO_LIVE_TO_START
     st = datetime.now(timezone.utc)
     is_ad_hoc = owner_ps_cmd is not None
-    psCmdResultObj,org_cmd_str = get_psCmdResultObj(orgAccountObj=orgAccountObj,ps_cmd='Destroy', username=username, is_adhoc=is_ad_hoc)
+    psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj=clusterObj,ps_cmd='Destroy', username=username, is_adhoc=is_ad_hoc)
     LOG.info(f"STARTED {org_cmd_str}")
     try:
         with ps_client.create_client_channel("control") as channel:
             stub = ps_server_pb2_grpc.ControlStub(channel)
             timeout= int(os.environ.get("GRPC_TIMEOUT_SECS",900))
-            LOG.info(f"gRpc: 'Destroy {orgAccountObj.name} timeout:{timeout}")
+            LOG.info(f"gRpc: 'Destroy {clusterObj.org.name} timeout:{timeout}")
             rsp_gen = stub.Destroy(
                 ps_server_pb2.DestroyRequest(
-                    name=orgAccountObj.name,
+                    name=clusterObj.org.name,
                     now=datetime.now(timezone.utc).strftime(FMT)),
                     timeout=timeout)
-            process_rsp_generator(  orgAccountObj=orgAccountObj,
+            process_rsp_generator(  clusterObj=clusterObj,
                                     ps_cmd='Destroy',
                                     rsp_gen=rsp_gen, 
                                     psCmdResultObj=psCmdResultObj,
@@ -1418,7 +1474,7 @@ def process_Destroy_cmd(orgAccountObj, username=None, owner_ps_cmd=None):
             raise e
         else:
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- Destroy {orgAccountObj.name}"
+            psCmdResultObj.ps_cmd_summary_label = f" --- Destroy {clusterObj.org.name}"
             if username is not None:
                 psCmdResultObj.ps_cmd_summary_label += f" {username}"
             psCmdResultObj.save()
@@ -1427,27 +1483,27 @@ def process_Destroy_cmd(orgAccountObj, username=None, owner_ps_cmd=None):
         psCmdResultObj.save()
         if owner_ps_cmd is not None:
             OwnerPSCmd.objects.get(id=owner_ps_cmd.id).delete()
-        ps_cmd_cleanup(orgAccountObj,st,org_cmd_str)
+        ps_cmd_cleanup(clusterObj,st,org_cmd_str)
         for handler in LOG.handlers:
             handler.flush()
 
 
-def process_owner_ps_cmd(orgAccountObj,owner_ps_cmd):
+def process_owner_ps_cmd(clusterObj,owner_ps_cmd):
     try:
         # This is a synchronous blocking call
         if owner_ps_cmd.ps_cmd == "Refresh":
-            process_Refresh_cmd(orgAccountObj=orgAccountObj,
+            process_Refresh_cmd(clusterObj=clusterObj,
                                 username=owner_ps_cmd.user.username,
                                 owner_ps_cmd=owner_ps_cmd)
         elif owner_ps_cmd.ps_cmd == "Destroy":
-            process_Destroy_cmd(orgAccountObj=orgAccountObj,
+            process_Destroy_cmd(clusterObj=clusterObj,
                                 username=owner_ps_cmd.user.username,
                                 owner_ps_cmd=owner_ps_cmd)
         else:
             LOG.error(f"ERROR: process_owner_ps_cmd: unexpected ps_cmd:{owner_ps_cmd.ps_cmd}")
-        LOG.info(f"DONE processing :{owner_ps_cmd.ps_cmd} {owner_ps_cmd.org} for {owner_ps_cmd.user.username} with {owner_ps_cmd.deploy_values} num_owner_ps_cmd:{orgAccountObj.num_owner_ps_cmd} id:{orgAccountObj.id}")
+        LOG.info(f"DONE processing :{owner_ps_cmd.ps_cmd} {owner_ps_cmd.org} for {owner_ps_cmd.user.username} with {owner_ps_cmd.deploy_values} num_owner_ps_cmd:{clusterObj.num_owner_ps_cmd} id:{clusterObj.id}")
     except Exception as e:
-        LOG.exception(f"ERROR processing OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {orgAccountObj.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
+        LOG.exception(f"ERROR processing OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {clusterObj.org.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
         LOG.info(f"sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
         sleep(COOLOFF_SECS)
     try:
@@ -1457,71 +1513,71 @@ def process_owner_ps_cmd(orgAccountObj,owner_ps_cmd):
     except OwnerPSCmd.DoesNotExist:
         pass # normally it's deleted inside process_provision_cmd
     except Exception as e:
-        LOG.exception(f"ERROR deleting processed OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {orgAccountObj.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
-        orgAccountObj.provisioning_suspended = True
-        orgAccountObj.save(update_fields=['provisioning_suspended'])
+        LOG.exception(f"ERROR deleting processed OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {clusterObj.org.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
+        clusterObj.provisioning_suspended = True
+        clusterObj.save(update_fields=['provisioning_suspended'])
 
-def process_owner_ps_cmds_table(orgAccountObj):
+def process_owner_ps_cmds_table(clusterObj):
     '''
     This function is called when a privileged user issues an ad-hoc Refresh or Delete command
     '''
-    env_ready,setup_occurred = check_provision_env_ready(orgAccountObj)
+    env_ready,setup_occurred = check_provision_env_ready(clusterObj)
     num_cmds_processed = 0
     if env_ready:
-        qs = OwnerPSCmd.objects.filter(org=orgAccountObj)
+        qs = OwnerPSCmd.objects.filter(cluster=clusterObj)
         #LOG.info(f"Enter with qs.count():{qs.count()}")
         for owner_ps_cmd in qs:
-            process_owner_ps_cmd(orgAccountObj,owner_ps_cmd)
+            process_owner_ps_cmd(clusterObj,owner_ps_cmd)
             num_cmds_processed += 1
-            orgAccountObj.num_owner_ps_cmd = orgAccountObj.num_owner_ps_cmd + 1
-            orgAccountObj.save(update_fields=['num_owner_ps_cmd'])
-    qs = OwnerPSCmd.objects.filter(org=orgAccountObj)
+            clusterObj.num_owner_ps_cmd = clusterObj.num_owner_ps_cmd + 1
+            clusterObj.save(update_fields=['num_owner_ps_cmd'])
+    qs = OwnerPSCmd.objects.filter(cluster=clusterObj)
     #LOG.info(f"Exit with qs.count():{qs.count()}")
     return (qs.count()>0),setup_occurred,num_cmds_processed
 
-def  process_prov_sys_tbls(orgAccountObj):
+def  process_prov_sys_tbls(clusterObj):
     '''
     This will empty the owner ps cmds table (OwnerPSCmd)
     then process the next org num node request 
-    from the OrgNumNodes table if there is one ready
+    from the ClusterNumNodes table if there is one ready
     Refresh and Destroy are the commands that are processed
     from this table
     '''
     try:
-        start_cmd_cnt = orgAccountObj.num_ps_cmd
-        #LOG.info(f"org:{orgAccountObj.name} num_ps_cmd:{num_ps_cmd} num_onn:{num_onn}")
+        start_cmd_cnt = clusterObj.num_ps_cmd
+        #LOG.info(f"org:{clusterObj.org.name} num_ps_cmd:{num_ps_cmd} num_onn:{num_onn}")
         start_time = time.time() 
         # during deployments multiple versions of ps-web are running
-        with advisory_lock(orgAccountObj.name) as acquired:
+        with advisory_lock(clusterObj.org.name) as acquired:
             end_time = time.time()  # record the ending time
             wait_time = end_time - start_time  # calculate the waiting time
             if wait_time > 3:  # only valid 
-                LOG.warning(f'Waited {wait_time} seconds to acquire lock for {orgAccountObj.name}')
+                LOG.warning(f'Waited {wait_time} seconds to acquire lock for {clusterObj.org.name}')
             has_more_ps_cmds = True
             setup_occurred = False
             num_cmds_processed = 0
             while has_more_ps_cmds:
-                has_more_ps_cmds,setup_occurred_this_time,num_cmds_processed_this_time = process_owner_ps_cmds_table(orgAccountObj)
+                has_more_ps_cmds,setup_occurred_this_time,num_cmds_processed_this_time = process_owner_ps_cmds_table(clusterObj)
                 setup_occurred = setup_occurred or setup_occurred_this_time
                 num_cmds_processed += num_cmds_processed_this_time
-            # check if at least one API called and/or onn expired and is not processed yet
-            #LOG.info(f"clusterObj:{clusterObj.org.name} {Cluster.objects.count()} {clusterObj.org.id}")
-            process_num_node_table(orgAccountObj,(num_cmds_processed==0 and setup_occurred))
+            # check if at least one API called and/or cnn expired and is not processed yet
+            #LOG.info(f"clusterObj:{clusterObj.org.name} {NodeGroup.objects.count()} {clusterObj.org.id}")
+            process_num_node_table(clusterObj,(num_cmds_processed==0 and setup_occurred))
     except Exception as e:
-        LOG.exception(f'Exception caught for {orgAccountObj.name}')
+        LOG.exception(f'Exception caught for {clusterObj.org.name}')
         LOG.info(f"sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
         sleep(COOLOFF_SECS)
-    return (orgAccountObj.num_ps_cmd == start_cmd_cnt) # task is idle if no new commands were processed 
+    return (clusterObj.num_ps_cmd == start_cmd_cnt) # task is idle if no new commands were processed 
 
-def loop_iter(orgAccountObj,loop_count):
+def loop_iter(clusterObj,loop_count):
     '''
     This is called from the main loop.
     The process_prov_sys_tbls function can block when processing ps_cmds
     so the timing of ~2hz is only when it is idle.
     '''
-    #LOG.info(f"BEFORE {'{:>10}'.format(loop_count)} {orgAccountObj.name} ps:{orgAccountObj.num_ps_cmd} ops:{orgAccountObj.num_owner_ps_cmd} onn:{orgAccountObj.num_onn}")
-    orgAccountObj.refresh_from_db()
-    is_idle = process_prov_sys_tbls(orgAccountObj)
+    #LOG.info(f"BEFORE {'{:>10}'.format(loop_count)} {clusterObj.org.name} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn}")
+    clusterObj.refresh_from_db()
+    is_idle = process_prov_sys_tbls(clusterObj)
     if is_idle:
         sleep(0.5) # ~2hz when idle
     #
@@ -1529,12 +1585,12 @@ def loop_iter(orgAccountObj,loop_count):
     # but keeps relevant info for diagnostics
     #
     if ((loop_count % 20) == 0): # about once every ten seconds OR 2 times a second * 10 seconds
-        orgAccountObj.loop_count = loop_count
-        orgAccountObj.save(update_fields=['loop_count'])
+        clusterObj.loop_count = loop_count
+        clusterObj.save(update_fields=['loop_count'])
     if ((loop_count % 7200) == 0): # about once every hour OR 2 times a second * 3600 seconds in an hour = 18000
-        LOG.info(f"{orgAccountObj.name} loop_count:{loop_count} orgAccountObj.loop_count:{orgAccountObj.loop_count} ps:{orgAccountObj.num_ps_cmd} ops:{orgAccountObj.num_owner_ps_cmd} onn:{orgAccountObj.num_onn}")
+        LOG.info(f"{clusterObj.org.name} loop_count:{loop_count} clusterObj.loop_count:{clusterObj.loop_count} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn}")
     loop_count=loop_count+1
-    #LOG.info(f"AFTER  {'{:>10}'.format(loop_count)} {orgAccountObj.name} ps:{orgAccountObj.num_ps_cmd} ops:{orgAccountObj.num_owner_ps_cmd} onn:{orgAccountObj.num_onn}")
+    #LOG.info(f"AFTER  {'{:>10}'.format(loop_count)} {clusterObj.org.name} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn}")
     return is_idle,loop_count
 
 def purge_old_PsCmdResultsForOrg(this_org):
@@ -1556,13 +1612,13 @@ def purge_ps_cmd_rslts(self):
 def hourly_processing(self):
     LOG.info(f"hourly_processing {self.request.id} started")
     try:
-        perform_cost_accounting_for_all_orgs() # updates forecasts
+        perform_cost_accounting_for_all_clusters() # updates forecasts
         reconcile_all_orgs() # computes balance and FYTD cost
         # Now find all Orgs that ran out of funds (i.e. the are Broke)
-        for orgAccountObj in find_broke_orgs():
-            owner_ps_cmd = OwnerPSCmd.objects.create(user=orgAccountObj.owner, org=orgAccountObj, ps_cmd='Destroy', create_time=datetime.now(timezone.utc))
+        for clusterObj in find_broke_clusters():
+            owner_ps_cmd = OwnerPSCmd.objects.create(user=clusterObj.org.owner, cluster=clusterObj, ps_cmd='Destroy', create_time=datetime.now(timezone.utc))
             owner_ps_cmd.save()
-            LOG.info(f"Destroy {orgAccountObj.name} queued for processing because it ran out of funds")
+            LOG.info(f"Destroy {clusterObj.org.name} queued for processing because it ran out of funds")
         LOG.info(f"hourly_processing {self.request.id} finished")
         return True
     except Exception as e:
@@ -1585,28 +1641,28 @@ def forever_loop_main_task(self,name,loop_count):
     '''
     This is the main loop for each org. 
     '''
-    orgAccountObj = OrgAccount.objects.get(name=name)
+    clusterObj = OrgAccount.objects.get(name=name)
     result = True
     task_idle = True
     redis_interface = None
     try:
-        LOG.info(f"forever_loop_main_task {self.request.id} STARTED for {orgAccountObj.name}")
+        LOG.info(f"forever_loop_main_task {self.request.id} STARTED for {clusterObj.org.name}")
         redis_interface = RedisInterface()
         while task_idle and redis_interface.server_is_up() and not get_PROVISIONING_DISABLED(redis_interface):
-            task_idle, loop_count = loop_iter(orgAccountObj,loop_count)
+            task_idle, loop_count = loop_iter(clusterObj,loop_count)
     except Exception as e:
-        LOG.exception(f'forever_loop_main_task - Exception caught while processing:{orgAccountObj.name}')
+        LOG.exception(f'forever_loop_main_task - Exception caught while processing:{clusterObj.org.name}')
         sleep(5) # wait 5 seconds before trying again
         result = False
     #run again if  we have a redis connection and not disabled
     if redis_interface is not None and redis_interface.server_is_up():
         if get_PROVISIONING_DISABLED(redis_interface) == False: 
             sleep(1)
-            LOG.info(f" forever_loop_main_task {self.request.id} RE-STARTED for {orgAccountObj.name} after Exception or PS_CMD because get_PROVISIONING_DISABLED is False!")
-            forever_loop_main_task.apply_async((orgAccountObj.name,orgAccountObj.loop_count),queue=get_org_queue_name(orgAccountObj))
+            LOG.info(f" forever_loop_main_task {self.request.id} RE-STARTED for {clusterObj.org.name} after Exception or PS_CMD because get_PROVISIONING_DISABLED is False!")
+            forever_loop_main_task.apply_async((clusterObj.name,clusterObj.loop_count),queue=get_cluster_queue_name(clusterObj))
         else:
-            LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {orgAccountObj.name} because PROVISIONING_DISABLED is True!")
+            LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {clusterObj.org.name} because PROVISIONING_DISABLED is True!")
     else:
-        LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {orgAccountObj.name} because we cannot connect to redis!")
-    LOG.info(f"forever_loop_main_task {self.request.id} FINISHED for {orgAccountObj.name} with result:{result} @ loop_count:{loop_count}")
+        LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {clusterObj.org.name} because we cannot connect to redis!")
+    LOG.info(f"forever_loop_main_task {self.request.id} FINISHED for {clusterObj.org.name} with result:{result} @ loop_count:{loop_count}")
     return result

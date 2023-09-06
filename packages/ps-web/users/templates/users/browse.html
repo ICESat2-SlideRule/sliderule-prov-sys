@@ -23,7 +23,7 @@
                             <div class="btn-group">
                                 {% if  not request.user.is_superuser  %}
                                     {% if user_is_developer %}
-                                        <a class="tag btn btn-outline-primary"  href="{% url 'create-org-account'%}">Add New Organization Account</a>
+                                        <a class="tag btn btn-outline-primary"  href="{% url 'org-create'%}">Add New Organization Account</a>
                                     {% endif %}
                                 {% endif %}
                             </div>
@@ -45,10 +45,10 @@
                             <div class="container-lg text-center">            
                                 <div class="accordion" id="ownership_accordian"> 
                                     <div class="container text-center">            
-                                        {% for org in org_accounts %}
-                                            {% if is_member_of_org|get_item:org.name %}
-                                                {% if user_is_owner|get_item:org.name %}
-                                                    {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name org_is_public=org_is_public|get_item:org.name this_active_ps_cmd=org_cluster_active_ps_cmd|get_item:org.name this_is_deployed=org_cluster_is_deployed|get_item:org.name  this_deployed_state=org_cluster_deployed_state|get_item:org.name cur_nodes=org_cluster_cur_nodes|get_item:org.name cur_version=org_cluster_cur_version|get_item:org.name this_connection_status=org_cluster_connection_status|get_item:org.name %}
+                                        {% for cluster in clusters %}
+                                            {% if is_member_of_org|get_item:cluster.org.name %}
+                                                {% if user_is_owner|get_item:cluster.org.name %}
+                                                    {% with cluster=cluster membership=org_member|get_item:cluster.org.name user_is_owner=user_is_owner|get_item:cluster.org.name cluster_is_public=cluster.is_public this_active_ps_cmd=cluster.active_ps_cmd this_is_deployed=cluster.is_deployed this_deployed_state=cluster.deployed_state cur_nodes=cluster.cur_nodes cur_version=cluster.cur_version %}
                                                         {% include 'users/member_card.html' %}
                                                     {% endwith %}
                                                 {% endif %}
@@ -71,10 +71,10 @@
                             <!---------  Then display memberships --------> 
                             <div class="container-lg text-center">
                                 <div class="accordion" id="membership_accordian"> 
-                                    {% for org in org_accounts %}
+                                    {% for cluster in clusters %}
                                         {% if is_member_of_org|get_item:org.name %}
-                                            {% if not user_is_owner|get_item:org.name and not org_is_public|get_item:org.name %}
-                                                {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name org_is_public=org_is_public|get_item:org.name this_active_ps_cmd=org_cluster_active_ps_cmd|get_item:org.name this_is_deployed=org_cluster_is_deployed|get_item:org.name  this_deployed_state=org_cluster_deployed_state|get_item:org.name cur_nodes=org_cluster_cur_nodes|get_item:org.name cur_version=org_cluster_cur_version|get_item:org.name this_connection_status=org_cluster_connection_status|get_item:org.name %}
+                                            {% if not user_is_owner|get_item:org.name and not cluster.is_public %}
+                                                {% with membership=org_member|get_item:cluster.org.name user_is_owner=user_is_owner|get_item:cluster.org.name cluster_is_public=cluster.is_public this_active_ps_cmd=cluster.active_ps_cmd this_is_deployed=cluster.is_deployed this_deployed_state=cluster.deployed_state cur_nodes=cluster.cur_nodes cur_version=cluster.cur_version %}
                                                     {% include 'users/member_card.html' %}
                                                 {% endwith %}
                                             {% endif %}
@@ -155,9 +155,9 @@
                                     <div class="container text-center">
                                         {% if user_is_developer %}
                                             {% for org in org_accounts %}
-                                                {% if org_is_public|get_item:org.name %}
+                                                {% if cluster_is_public|get_item:org.name %}
                                                     {% if is_member_of_org|get_item:org.name %}
-                                                        {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name org_is_public=org_is_public|get_item:org.name this_active_ps_cmd=org_cluster_active_ps_cmd|get_item:org.name this_is_deployed=org_cluster_is_deployed|get_item:org.name  this_deployed_state=org_cluster_deployed_state|get_item:org.name cur_nodes=org_cluster_cur_nodes|get_item:org.name cur_version=org_cluster_cur_version|get_item:org.name this_connection_status=org_cluster_connection_status|get_item:org.name %}
+                                                        {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name cluster_is_public=cluster_is_public|get_item:org.name this_active_ps_cmd=org_cluster_active_ps_cmd|get_item:org.name this_is_deployed=org_cluster_is_deployed|get_item:org.name  this_deployed_state=org_cluster_deployed_state|get_item:org.name cur_nodes=org_cluster_cur_nodes|get_item:org.name cur_version=org_cluster_cur_version|get_item:org.name this_connection_status=org_cluster_connection_status|get_item:org.name %}
                                                             {% include 'users/member_card.html' %}
                                                         {% endwith %}
                                                     {% endif %}
@@ -165,7 +165,7 @@
                                             {% endfor %}
                                         {% else %}
                                             {% for org in org_accounts %}
-                                                {% if org_is_public|get_item:org.name %}
+                                                {% if cluster_is_public|get_item:org.name %}
                                                     <div class="accordian-item shadow">
                                                         <h2 class="accordian-header" id="hd_{{org.name}}">
                                                             <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_p" aria-expanded="true" aria-controls="collapse_{{org.name}}_p">

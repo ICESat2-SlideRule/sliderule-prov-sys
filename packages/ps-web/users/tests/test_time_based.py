@@ -1,9 +1,8 @@
 import unittest
 import pytest
 from users.tests.global_test import GlobalTestCase
-from users.utils import create_org_queue,init_celery
 from users.tasks import getGranChoice,getFiscalStartDate,reconcile_org,get_org_cost_data,create_forecast
-from users.models import OrgAccount,OrgCost,GranChoice
+from users.models import OrgAccount,Cost,GranChoice
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from users.tests.utilities_for_unit_tests import init_test_environ
 import time_machine
@@ -321,11 +320,11 @@ class TimeBasedTasksTest(TimeTestCaseMixin,TestCase):
         self.verify_create_forecast_with_time_of_day(inputs=inputs,expected=expected)
 
     @pytest.mark.cost
-    def verify_get_org_cost_data(self,inputs,expected):
+    def verify_get_cost_data(self,inputs,expected):
         with time_machine.travel(inputs['time_to_test'],tick=False):
             fake_now = datetime.now(timezone.utc)
             granObj = getGranChoice(granularity='HOURLY')
-            orgCostObj = OrgCost(org=orgAccountObj, gran=granObj, cost_refresh_time=datetime.now(timezone.utc)-timedelta(weeks=52),tm=datetime.now(timezone.utc))
+            orgCostObj = Cost(org=orgAccountObj, gran=granObj, cost_refresh_time=datetime.now(timezone.utc)-timedelta(weeks=52),tm=datetime.now(timezone.utc))
 
             orgAccountObj,owner = init_test_environ("TestOrg",
                                                     org_owner=None,

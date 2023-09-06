@@ -1,7 +1,7 @@
 <div class="accordian-item shadow">
-    <h2 class="accordian-header" id="hd_{{membership.org.name}}">
+    <h2 class="accordian-header" id="hd_{{cluster}}">
         <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{membership.org.name}}_m" aria-expanded="true" aria-controls="collapse_{{membership.org.name}}_m">
-            {{membership.org.name}}
+            {{cluster}}
         </button>
     </h2>
     <div id="collapse_{{membership.org.name}}_m" class="accordion-collapse collapse my-1" aria-labelledby="hd_{{membership.org.name}}" data-bs-parent="#membership_accordion">
@@ -26,7 +26,7 @@
                         </div>
                         <div my-4 mx-2>
                             <dl class="border border-0">
-                                {% with active_ps_cmd=this_active_ps_cmd deployed_state=this_deployed_state is_deployed=this_is_deployed cur_nodes=cur_nodes cur_version=cur_version connection_status=this_connection_status %}
+                                {% with active_ps_cmd=this_active_ps_cmd deployed_state=this_deployed_state is_deployed=this_is_deployed cur_nodes=cur_nodes cur_version=cur_version %}
                                 <dt> Cluster State</dt>
                                 <dd>
                                     {% include 'users/cluster_state.html' %}
@@ -34,16 +34,16 @@
                                 {% endwith %}
                                 <dt>Auto-Shutdown</dt>
                                 {% if show_shutdown_date %}
-                                    <dd>{{org.min_ddt|date:"Y-m-d H:i:s A T"}}</dd>
+                                    <dd>{{cluster.budget.min_ddt|date:"Y-m-d H:i:s A T"}}</dd>
                                 {% else %}
                                     <p>No shutdown scheduled</p>
                                 {% endif %}
                                 <dt>Monthly Allowance</dt>
-                                <dd>{{membership.org.monthly_allowance}}</dd>
+                                <dd>{{cluster.budget.monthly_allowance}}</dd>
                                 <dt>Current Balance</dt>
-                                <dd>{{membership.org.balance}}</dd>
+                                <dd>{{cluster.budget.balance}}</dd>
                                 <dt>Max Allowance</dt>
-                                <dd>{{membership.org.max_allowance}}</dd>
+                                <dd>{{cluster.budget.max_allowance}}</dd>
                                 {% if not user_is_owner  %}
                                     <dt>Owner</dt>
                                     <dd> {{membership.org.owner.first_name}} {{membership.org.owner.last_name}}</dd>

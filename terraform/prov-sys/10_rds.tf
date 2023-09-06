@@ -44,3 +44,30 @@ resource "aws_db_instance" "prov-sys" {
     Name = "${var.domain_root}-ps-db"
   }
 }
+
+resource "aws_db_instance" "prov-sys-v4" {
+  identifier                = var.rds_id
+  db_name                   = local.provsys_creds.rds_db_name_v4
+  username                  = local.provsys_creds.rds_username_v4
+  password                  = local.provsys_creds.rds_password_v4
+  port                      = local.provsys_creds.rds_port_v4
+  engine                    = "postgres"
+  instance_class            = var.rds_instance_class
+  allocated_storage         = "20"
+  storage_encrypted         = false
+  vpc_security_group_ids    = [aws_security_group.rds.id]
+  parameter_group_name      = aws_db_parameter_group.prov-sys.name
+  db_subnet_group_name      = aws_db_subnet_group.prov-sys.name
+  multi_az                  = true
+  storage_type              = "gp2"
+  publicly_accessible       = false
+  backup_retention_period   = 7
+  skip_final_snapshot       = false
+  snapshot_identifier       = var.rds_restore_with_snapshot
+  final_snapshot_identifier = var.rds_final_snapshot
+  delete_automated_backups  = false
+
+  tags = {
+    Name = "${var.domain_root}-ps-db-v4"
+  }
+}

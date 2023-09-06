@@ -7,12 +7,12 @@ import json
 from importlib import import_module
 from decimal import *
 from django.urls import reverse
-from users.models import Membership,OwnerPSCmd,OrgAccount,OrgNumNode,Cluster
-from users.tests.utilities_for_unit_tests import init_test_environ,get_test_org,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,random_test_user
+from users.models import Membership,OwnerPSCmd,OrgAccount,ClusterNumNode,NodeGroup
+from users.tests.utilities_for_unit_tests import init_test_environ,get_test_org,get_test_compute_cluster,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,random_test_user
 from users.tasks import loop_iter
 # Import the fixtures
 from users.tests.utilities_for_unit_tests import TEST_USER,TEST_PASSWORD,DEV_TEST_USER,DEV_TEST_PASSWORD,TEST_ORG_NAME
-from users.models import OwnerPSCmd,OrgNumNode,OrgAccount,PsCmdResult
+from users.models import OwnerPSCmd,ClusterNumNode,OrgAccount,PsCmdResult
 
 module_name = 'views'
 # discover the src directory to import the file being tested
@@ -53,7 +53,9 @@ def test_no_token(caplog,client,mock_email_backend,initialize_test_environ):
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    url = reverse('post-org-num-nodes-ttl',args=[orgAccountObj.name,3,15])
+    clusterObj = get_test_compute_cluster()
+    url = reverse('post-num-nodes-ttl',args=[orgAccountObj.name,clusterObj.name,3,15])
+
     response = client.post(url)
     assert (response.status_code == 400)   # no token was provided
 
@@ -62,7 +64,7 @@ def test_no_token(caplog,client,mock_email_backend,initialize_test_environ):
 @pytest.mark.ps_server_stubbed
 def test_org_token(caplog,client,mock_email_backend,initialize_test_environ):
     '''
-        This procedure will test owner grabs token and can queue a ONN
+        This procedure will test owner grabs token and can queue a CNN
     '''
     caplog.set_level(logging.DEBUG)
     
@@ -72,7 +74,7 @@ def test_org_token(caplog,client,mock_email_backend,initialize_test_environ):
     logger.info(f"status:{response.status_code}")
     assert (response.status_code == 200)   
     assert (OwnerPSCmd.objects.count()==0)
-    assert (OrgNumNode.objects.count()==0)
+    assert (ClusterNumNode.objects.count()==0)
     # Decode the JSON response
     json_data = json.loads(response.content)    
     #logger.info(f"rsp:{json_data}")
@@ -82,14 +84,14 @@ def test_org_token(caplog,client,mock_email_backend,initialize_test_environ):
 #@pytest.mark.dev
 @pytest.mark.django_db 
 @pytest.mark.ps_server_stubbed
-def test_org_ONN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
+def test_org_CNN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
     '''
-        This procedure will test owner grabs token and can queue a ONN
+        This procedure will test owner grabs token and can queue a CNN
     '''
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+    clusterObj = get_test_compute_cluster()
     
     url = reverse('org-token-obtain-pair')
 
@@ -97,22 +99,21 @@ def test_org_ONN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
     logger.info(f"status:{response.status_code}")
     assert (response.status_code == 200)   
     assert (OwnerPSCmd.objects.count()==0)
-    assert (OrgNumNode.objects.count()==0)
+    assert (ClusterNumNode.objects.count()==0)
     json_data = json.loads(response.content)
     logger.info(f"rsp:{json_data}")
     assert(json_data['access_lifetime']=='3600.0')   
     assert(json_data['refresh_lifetime']=='86400.0')   
 
     loop_count=0
-    orgAccountObj.num_owner_ps_cmd=0
-    orgAccountObj.num_ps_cmd=0
-    orgAccountObj.num_ps_cmd_successful=0
-    orgAccountObj.num_onn=0
-    orgAccountObj.save()
+    clusterObj.num_owner_ps_cmd=0
+    clusterObj.num_ps_cmd=0
+    clusterObj.num_ps_cmd_successful=0
+    clusterObj.num_onn=0
+    clusterObj.save()
 
+    url = reverse('post-num-nodes-ttl',args=[orgAccountObj.name,clusterObj.name,3,15])    
 
-    
-    url = reverse('post-org-num-nodes-ttl',args=[orgAccountObj.name,3,15])    
     response = client.post(url,headers={'Authorization': f"Bearer {json_data['access']}"})
     assert (response.status_code == 200) 
     json_data = json.loads(response.content)
@@ -122,47 +123,44 @@ def test_org_ONN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
     logger.info(f"msg:{json_data['msg']}")  
     clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
     
-    
-  
-    task_idle, loop_count = loop_iter(orgAccountObj,loop_count)
+    task_idle, loop_count = loop_iter(clusterObj,loop_count)
     clusterObj.refresh_from_db()
-    orgAccountObj.refresh_from_db()
     assert(loop_count==1)
     assert(clusterObj.provision_env_ready)
-    assert(orgAccountObj.provisioning_suspended==False)
-    assert(orgAccountObj.num_ps_cmd==1) # onn triggered update
-    assert(orgAccountObj.num_ps_cmd_successful==1) 
-    assert(orgAccountObj.num_onn==1)
+    assert(clusterObj.provisioning_suspended==False)
+    assert(clusterObj.num_ps_cmd==1) # cnn triggered update
+    assert(clusterObj.num_ps_cmd_successful==1) 
+    assert(clusterObj.num_onn==1)
     
 
-    task_idle, loop_count = loop_iter(orgAccountObj,loop_count)
+    task_idle, loop_count = loop_iter(clusterObj,loop_count)
     clusterObj.refresh_from_db()
     orgAccountObj.refresh_from_db()
     assert(task_idle)
     assert(loop_count==2)   
 
     assert PsCmdResult.objects.count() == 1 # Update 
-    psCmdResultObjs = PsCmdResult.objects.filter(org=orgAccountObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Update' in psCmdResultObjs[0].ps_cmd_summary_label
 
-    assert(orgAccountObj.provisioning_suspended==False)
-    assert(orgAccountObj.num_ps_cmd==1)
-    assert(orgAccountObj.num_ps_cmd_successful==1) 
-    assert(orgAccountObj.num_onn==1)
+    assert(clusterObj.provisioning_suspended==False)
+    assert(clusterObj.num_ps_cmd==1)
+    assert(clusterObj.num_ps_cmd_successful==1) 
+    assert(clusterObj.num_onn==1)
     
 
 #@pytest.mark.dev
 @pytest.mark.django_db 
 @pytest.mark.ps_server_stubbed
-def test_org_ONN(caplog,client,mock_email_backend,initialize_test_environ):
+def test_org_CNN(caplog,client,mock_email_backend,initialize_test_environ):
     '''
-        This procedure will test owner grabs token and can queue a ONN
+        This procedure will test owner grabs token and can queue a CNN
     '''
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+    clusterObj = get_test_compute_cluster()
     
     url = reverse('org-token-obtain-pair')
 
@@ -170,21 +168,21 @@ def test_org_ONN(caplog,client,mock_email_backend,initialize_test_environ):
     logger.info(f"status:{response.status_code}")
     assert (response.status_code == 200)   
     assert (OwnerPSCmd.objects.count()==0)
-    assert (OrgNumNode.objects.count()==0)
+    assert (ClusterNumNode.objects.count()==0)
     json_data = json.loads(response.content)
     logger.info(f"rsp:{json_data}")
     assert(json_data['access_lifetime']=='3600.0')   
     assert(json_data['refresh_lifetime']=='86400.0')   
 
     loop_count=0
-    orgAccountObj.num_owner_ps_cmd=0
-    orgAccountObj.num_ps_cmd=0
-    orgAccountObj.num_ps_cmd_successful=0
-    orgAccountObj.num_onn=0
-    orgAccountObj.save()
+    clusterObj.num_owner_ps_cmd=0
+    clusterObj.num_ps_cmd=0
+    clusterObj.num_ps_cmd_successful=0
+    clusterObj.num_onn=0
+    clusterObj.save()
 
-    url = reverse('put-org-num-nodes',args=[orgAccountObj.name,3])
-    
+    url = reverse('put-num-nodes',args=[orgAccountObj.name,clusterObj.name,3])
+  
     response = client.put(url,headers={'Authorization': f"Bearer {json_data['access']}"})
     assert (response.status_code == 200) 
     json_data = json.loads(response.content)
@@ -196,14 +194,14 @@ def test_org_ONN(caplog,client,mock_email_backend,initialize_test_environ):
     
     
   
-    task_idle, loop_count = loop_iter(orgAccountObj,loop_count)
+    task_idle, loop_count = loop_iter(clusterObj,loop_count)
     clusterObj.refresh_from_db()
     orgAccountObj.refresh_from_db()
     assert(loop_count==1)
     assert(clusterObj.provision_env_ready)
-    assert(orgAccountObj.provisioning_suspended==False)
-    assert(orgAccountObj.num_ps_cmd==1) # onn triggered update
-    assert(orgAccountObj.num_ps_cmd_successful==1) 
-    assert(orgAccountObj.num_onn==1)
+    assert(clusterObj.provisioning_suspended==False)
+    assert(clusterObj.num_ps_cmd==1) # cnn triggered update
+    assert(clusterObj.num_ps_cmd_successful==1) 
+    assert(clusterObj.num_onn==1)
     
 

@@ -181,3 +181,20 @@ variable "ps_bld_envver" {
 variable "site_id" {
   description = "Used to set the Django settings.SITE_ID"
 }
+
+# migrations
+
+variable "create_new_db" {
+  description = "Create the a new database"
+  default     = false
+}
+
+variable "run_migrations" {
+  description = "Run Django migrations"
+  default     = false
+}
+
+variable "run_data_migrations" {
+  description = "Run Django data migrations"
+  default     = false
+}

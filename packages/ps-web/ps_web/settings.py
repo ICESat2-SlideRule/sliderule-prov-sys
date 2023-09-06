@@ -231,22 +231,14 @@ WSGI_APPLICATION = 'ps_web.wsgi.application'
 
 
 # Database
-# NOTE sqllite3 is just the fallback!
 DATABASES = {
     "default": {
         "ENGINE": os.environ.get("SQL_ENGINE"),
         "NAME": os.environ.get("POSTGRES_DB"),
         "USER": os.environ.get("POSTGRES_USER"),
         "PASSWORD": os.environ.get("POSTGRES_PASSWORD"),
-        "HOST": os.environ.get("SQL_HOST"),
-        "PORT": os.environ.get("SQL_PORT"),
-        # migrating to and/or connecting to an aws db
-        #     "ENGINE": "django.db.backends.postgresql",
-        #     "NAME": "provsys",
-        #     "USER": "ps_admin",
-        #     "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "password"),
-        #     "HOST": "prov-sys.[hostname id here].[region].rds.amazonaws.com", ## this can change
-        #     "PORT": "[port number here]",
+        "HOST": os.environ.get("POSTGRES_HOST"),
+        "PORT": os.environ.get("POSTGRES_PORT"),
     }
 }
 
@@ -367,14 +359,7 @@ CELERY_RESULT_BACKEND = 'django-db'
 CELERY_CACHE_BACKEND = 'default'
 #CELERY_cache_backend = 'default'# django setting.
 
-# Run this one time to create the cache: 
-# $ python manage.py createcachetable
-# CACHES = {
-#     'default': {
-#         'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
-#         'LOCATION': 'my_cache_table',
-#     }
-# }
+
 DJANGO_CELERY_BEAT_TZ_AWARE = True
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 CELERYBEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'

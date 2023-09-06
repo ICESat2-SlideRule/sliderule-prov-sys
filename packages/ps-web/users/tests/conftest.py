@@ -2,8 +2,8 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.core import mail
 from users.tests.utilities_for_unit_tests import TEST_EMAIL,TEST_ORG_NAME,TEST_PASSWORD,TEST_USER,DEV_TEST_EMAIL,DEV_TEST_PASSWORD,DEV_TEST_USER,create_test_user
-from users.tests.utilities_for_unit_tests import random_test_user,init_test_environ,verify_user,mock_django_email_backend,get_test_org,call_SetUp
-from users.models import Cluster
+from users.tests.utilities_for_unit_tests import random_test_user,init_test_environ,verify_user,mock_django_email_backend,get_test_org,get_test_compute_cluster,call_SetUp
+from users.models import NodeGroup
 from datetime import datetime, timezone, timedelta
 from django.contrib.auth.models import Group
 from django.contrib.sites.models import Site

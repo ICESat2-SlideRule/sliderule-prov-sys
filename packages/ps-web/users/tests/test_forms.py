@@ -6,8 +6,8 @@ import sys
 import os
 import pathlib
 from importlib import import_module
-from users.tests.utilities_for_unit_tests import get_test_org,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,the_TEST_USER
-from users.forms import OrgNumNodeForm
+from users.tests.utilities_for_unit_tests import get_test_org,get_test_compute_cluster,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,the_TEST_USER
+from users.forms import ClusterNumNodeForm
 from users.models import OrgAccount
 from django.urls import reverse
 import time_machine
@@ -55,46 +55,46 @@ def teardown_module(tasks_module):
 @pytest.mark.ps_server_stubbed
 def test_num_node_form_valid(caplog,client,create_TEST_USER,mock_email_backend,initialize_test_environ):
     form_data = {
-        'desired_num_nodes': get_test_org().MIN_NODES,
+        'desired_num_nodes': get_test_compute_cluster().MIN_NODES,
         'ttl_minutes': 15,
     }
-    form = OrgNumNodeForm(form_data, min_nodes=get_test_org().MIN_NODES, max_nodes=get_test_org().ABS_MAX_NODES)
+    form = ClusterNumNodeForm(form_data, min_nodes=get_test_org().MIN_NODES, max_nodes=get_test_compute_cluster().ABS_MAX_NODES)
     assert form.is_valid()
 
     form_data = {
         'desired_num_nodes': -1,
         'ttl_minutes': 15,
     }
-    form = OrgNumNodeForm(form_data, min_nodes=get_test_org().MIN_NODES, max_nodes=get_test_org().ABS_MAX_NODES)
+    form = ClusterNumNodeForm(form_data, min_nodes=get_test_compute_cluster().MIN_NODES, max_nodes=get_test_compute_cluster().ABS_MAX_NODES)
     assert not form.is_valid() # NOTE we catch this in the clean method
 
     form_data = {
-        'desired_num_nodes': get_test_org().MIN_NODES+1,
+        'desired_num_nodes': get_test_compute_cluster().MIN_NODES+1,
         'ttl_minutes': 15,
     }
-    form = OrgNumNodeForm(form_data, min_nodes=get_test_org().MIN_NODES, max_nodes=get_test_org().ABS_MAX_NODES)
+    form = ClusterNumNodeForm(form_data, min_nodes=get_test_compute_cluster().MIN_NODES, max_nodes=get_test_compute_cluster().ABS_MAX_NODES)
     assert form.is_valid()
 
     form_data = {
         'desired_num_nodes': 0,
         'ttl_minutes': 15,
     }
-    form = OrgNumNodeForm(form_data, min_nodes=1, max_nodes=get_test_org().ABS_MAX_NODES)
+    form = ClusterNumNodeForm(form_data, min_nodes=1, max_nodes=get_test_compute_cluster().ABS_MAX_NODES)
     assert form.is_valid()
 
     form_data = {
         'desired_num_nodes': 1,
         'ttl_minutes': 15,
     }
-    form = OrgNumNodeForm(form_data, min_nodes=1, max_nodes=get_test_org().ABS_MAX_NODES)
+    form = ClusterNumNodeForm(form_data, min_nodes=1, max_nodes=get_test_compute_cluster().ABS_MAX_NODES)
     assert form.is_valid()
 
 
-    form = OrgNumNodeForm(min_nodes=2, max_nodes=OrgAccount.ABS_MAX_NODES)
+    form = ClusterNumNodeForm(min_nodes=2, max_nodes=ASGNodeLimits.ABS_MAX_NODES)
     assert form.fields['desired_num_nodes'].initial == 2
 
-    form = OrgNumNodeForm(min_nodes=0, max_nodes=OrgAccount.ABS_MAX_NODES)
+    form = ClusterNumNodeForm(min_nodes=0, max_nodes=ASGNodeLimits.ABS_MAX_NODES)
     assert form.fields['desired_num_nodes'].initial == 1
 
-    form = OrgNumNodeForm(min_nodes=10, max_nodes=OrgAccount.ABS_MAX_NODES)
+    form = ClusterNumNodeForm(min_nodes=10, max_nodes=ASGNodeLimits.ABS_MAX_NODES)
     assert form.fields['desired_num_nodes'].initial == 10  # min_nodes + 1

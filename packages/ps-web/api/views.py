@@ -13,7 +13,7 @@ from rest_framework.exceptions import ValidationError
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from datetime import datetime, timezone, timedelta
-from users.models import Membership, OrgAccount, User, Cluster, OrgNumNode
+from users.models import Membership, OrgAccount, User, NodeGroup, ClusterNumNode
 from users.ps_errors import ClusterDeployAuthError
 import logging
 from rest_framework.permissions import IsAuthenticated
@@ -147,11 +147,6 @@ def get_token_org_active_membership(request,org_name):
                     LOG.warning(emsg)
                     jrsp = {'status': "FAILED","error_msg":emsg}
                     status=400
-            except ClusterDeployAuthError as e:
-                msg = f"Org {orgAccountObj.name} is not configured to allow deploy by token"
-                LOG.exception(msg)
-                jrsp = {'status': "FAILED","error_msg":msg}
-                status = 401
             except Exception as e:
                 LOG.exception("caught exception:")
                 jrsp = {'status': "FAILED","error_msg":"Server Error"}
@@ -184,7 +179,7 @@ class MembershipStatusView(generics.RetrieveAPIView):
 
 class DesiredNumNodesView(generics.UpdateAPIView):
     '''
-        Takes an org_name and desired_num_nodes and creates an OrgNumNode request for the org. 
+        Takes an name and desired_num_nodes and creates an ClusterNumNode request for the org. 
         This will go into the pool of requests for the org.
         This request will expire when the token expires (one hour). 
         The msg field of the JSON response will contain the this expiration date/time.
@@ -192,14 +187,14 @@ class DesiredNumNodesView(generics.UpdateAPIView):
         Expired entries are immediately removed from the pool and the number of nodes are adjusted if needed.
     '''
     serializer_class = DummySerializer
-    def update(self, request, org_name, desired_num_nodes, *args, **kwargs):
+    def update(self, request, name, cluster_name, desired_num_nodes, *args, **kwargs):
         try:
             jrsp, http_status, active, user, token_expire_date = get_token_org_active_membership(request, org_name)
             if http_status == status.HTTP_200_OK:
                 if active:
                     LOG.info(f"type(token_expire_date):{type(token_expire_date)}")
                     LOG.info(f"token_expire_date:{token_expire_date}")
-                    jrsp, http_status = process_num_nodes_api(org_name, user, desired_num_nodes, token_expire_date, False)
+                    jrsp, http_status = process_num_nodes_api(name=name, cluster_name=cluster_name, user=user, desired_num_nodes=desired_num_nodes, expire_time=token_expire_date)
             else:
                 return Response(jrsp, status=http_status)
         except Exception as e:
@@ -210,7 +205,7 @@ class DesiredNumNodesView(generics.UpdateAPIView):
 
 class DesiredNumNodesTTLView(generics.CreateAPIView):
     '''
-        Takes an org_name, desired_num_nodes and ttl ("time to live" in minutes) and creates an OrgNumNode request for the org.
+        Takes an name, cluster_name, desired_num_nodes and ttl ("time to live" in minutes) and creates an ClusterNumNode request for the org.
         NOTE: If the ttl is not provided, the time to live will be set the the minimum (15 minutes). The maximum ttl is 720 minutes (i.e. 12 hours).
         This request will go into the pool of requests for the org.
         The msg field of the JSON response will contain the this expiration date/time.
@@ -218,7 +213,7 @@ class DesiredNumNodesTTLView(generics.CreateAPIView):
         Expired entries are immediately removed from the pool and the number of nodes are adjusted if needed.
     '''
     serializer_class = DummySerializer
-    def create(self, request, org_name, desired_num_nodes, ttl=None, *args, **kwargs):
+    def create(self, request, name, cluster_name, desired_num_nodes, ttl=None, *args, **kwargs):
         try:
             jrsp, http_status, active, user, token_expire_date = get_token_org_active_membership(request, org_name)
             if http_status == status.HTTP_200_OK:
@@ -228,15 +223,15 @@ class DesiredNumNodesTTLView(generics.CreateAPIView):
                         max_ttl_hrs = MAX_TTL/60
                         jrsp = {'status': "FAILED","error_msg":f"TTL mins must be greater than or equal to 15 and less than or equal to {MAX_TTL} (i.e. ({max_ttl_hrs} hrs)"}
                     else:
-                        orgAccountObj = OrgAccount.objects.get(name=org_name)
-                        clusterObj = Cluster.objects.get(org=orgAccountObj)
+                        orgAccountObj = OrgAccount.objects.get(name=name)
+                        clusterObj = NodeGroup.objects.get(org=orgAccountObj,name=cluster_name)
                         if ttl is None:
                             ttl_exp_tm = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=MIN_TTL)
                         else:
                             ttl_exp_tm = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=int(ttl))
                         LOG.info(f"type(ttl_exp_tm):{type(ttl_exp_tm)} ttl_exp_tm:{ttl_exp_tm} ttl:{ttl}")
-                        if clusterObj.is_deployed or orgAccountObj.allow_deploy_by_token:
-                            jrsp,http_status = process_num_nodes_api(org_name,user,desired_num_nodes,ttl_exp_tm,False)
+                        if clusterObj.is_deployed or clusterObj.allow_deploy_by_token:
+                            jrsp,http_status = process_num_nodes_api(name=name, cluster_name=cluster_name, user=user, desired_num_nodes=desired_num_nodes, expire_time=token_expire_date)
                         else:
                             jrsp = {'status': "FAILED","error_msg":f"cluster for {orgAccountObj.name} is not deployed and is not configured to be deployed with this request (See admin for details)"}
                             http_status = status.HTTP_503_SERVICE_UNAVAILABLE
@@ -254,18 +249,18 @@ class OrgIpAdrView(generics.RetrieveAPIView):
         Takes an org_name and returns the IP address of the cluster manager for the org.
     '''
     serializer_class = DummySerializer
-    def get(self, request, org_name, *args, **kwargs):
+    def get(self, request, name, cluster_name, *args, **kwargs):
         try:
             jrsp, http_status, active, user, token_expire_date = get_token_org_active_membership(request, org_name)
             if http_status == status.HTTP_200_OK:
                 if active:
-                    orgAccountObj = OrgAccount.objects.get(name=org_name)
-                    clusterObj = Cluster.objects.get(org=orgAccountObj)
+                    orgAccountObj = OrgAccount.objects.get(name=name)
+                    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name=cluster_name)
                     if clusterObj.is_deployed:
                         jrsp = {'status': "SUCCESS",'ip_address':clusterObj.mgr_ip_address}
                         http_status = status.HTTP_200_OK
                     else:
-                        jrsp = {'status': "FAILED","error_msg":f"cluster for {orgAccountObj.name} is not deployed."}
+                        jrsp = {'status': "FAILED","error_msg":f"cluster for {clusterObj} is not deployed."}
                         http_status = status.HTTP_503_SERVICE_UNAVAILABLE
             else:
                 return Response(jrsp, status=http_status)
@@ -277,11 +272,11 @@ class OrgIpAdrView(generics.RetrieveAPIView):
     
 class RemoveUserNumNodesReqsView(generics.UpdateAPIView):
     '''
-        Removes all OrgNumNode requests for the org from this user from the active pool of requests. 
+        Removes all ClusterNumNode requests for the org from this user from the active pool of requests. 
     '''
     serializer_class = DummySerializer
-    def update(self, request, org_name, *args, **kwargs):
-        LOG.info(f"{request.user.username} {org_name}")
+    def update(self, request, name, cluster_name, *args, **kwargs):
+        LOG.info(f"{request.user.username} {name}")
         status = 200
         try:
             orgAccountObj = OrgAccount.objects.get(name=org_name)
@@ -291,17 +286,18 @@ class RemoveUserNumNodesReqsView(generics.UpdateAPIView):
         jrsp,status,active,user,token_expire_date = get_token_org_active_membership(request,org_name)
         if status == 200:
             if active:
-                jrsp = remove_num_node_requests(request.user,orgAccountObj,only_owned_by_user=True)
+                clusterObj = NodeGroup.objects.get(org=orgAccountObj,name=cluster_name)
+                jrsp = remove_num_node_requests(request.user,clusterObj,only_owned_by_user=True)
         return Response(jrsp,status = status)
 
 
 class RemoveAllNumNodesReqsView(generics.UpdateAPIView):
     '''
-        Removes all OrgNumNode requests for the org from the active pool of requests.  Must be a developer or owner of the org to remove ALL the requests.
+        Removes all ClusterNumNode requests for the org from the active pool of requests.  Must be a developer or owner of the org to remove ALL the requests.
     '''
     serializer_class = DummySerializer
-    def update(self, request, org_name, *args, **kwargs):
-        LOG.info(f"{request.user.username} {org_name}")
+    def update(self, request, name, cluster_name, *args, **kwargs):
+        LOG.info(f"{request.user.username} {name}")
         status = 200
         try:
             orgAccountObj = OrgAccount.objects.get(name=org_name)
@@ -313,8 +309,9 @@ class RemoveAllNumNodesReqsView(generics.UpdateAPIView):
             if active:
                 jrsp,status,user_in_token = get_user_in_token(request)
                 if user_in_token is not None:
-                    if user_in_token.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner==user_in_token:
-                        jrsp = remove_num_node_requests(request.user,orgAccountObj,only_owned_by_user=False)
+                    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name=cluster_name)
+                    if user_in_token.groups.filter(name='PS_Developer').exists() or clusterObj.owner==user_in_token:
+                        jrsp = remove_num_node_requests(request.user,clusterObj,only_owned_by_user=False)
                     else:
                         status = 400
                         jrsp = {'status': "FAILED","error_msg":f"{user_in_token.username} is not an admin of {org_name}"}
@@ -328,20 +325,21 @@ class RemoveAllNumNodesReqsView(generics.UpdateAPIView):
 
 class ClusterConfigView(generics.UpdateAPIView):
     '''
-    Takes an org_name min_nodes and max_nodes and updates the cluster's min and max nodes.
+    Takes an org_name cluster_name min_nodes and max_nodes and updates the cluster's min and max nodes.
     These are the limits that regular users can request.
     NOTE: Must be a developer or owner of the org to update the config.
     '''
     serializer_class = DummySerializer
 
-    def update(self, request, org_name, min_nodes, max_nodes, *args, **kwargs):
+    def update(self, request, org_name, cluster_name, min_nodes, max_nodes, *args, **kwargs):
 
-        LOG.info(f"{request.user.username} {org_name} min:{min_nodes} max:{max_nodes}")
+        LOG.info(f"{request.user.username} {org_name} {cluster_name} min:{min_nodes} max:{max_nodes}")
 
         try:
-            orgAccountObj = OrgAccount.objects.get(name=org_name)
+            clusterObj = NodeGroup.objects.get(name=cluster_name,org_name=org_name)
+            orgAccountObj = clusterObj.org
         except:
-            jrsp = {'status': "FAILED","error_msg":f"Unknown org:{org_name}"}
+            jrsp = {'status': "FAILED","error_msg":f"Unknown :{org_name} {cluster_name}"}
             return Response(jrsp, status=status.HTTP_400_BAD_REQUEST)
 
         jrsp, http_status, active, user, token_expire_date = get_token_org_active_membership(request, org_name)
@@ -349,20 +347,22 @@ class ClusterConfigView(generics.UpdateAPIView):
             if active:
                 if user is not None:
                     if user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner==user:
-                        LOG.info(f'configuring min-max nodes for {orgAccountObj.name} {user.username} ')
+                        clusterObj = NodeGroup.objects.get(org=orgAccountObj,name=cluster_name)
+                        LOG.info(f'configuring min-max nodes for {clusterObj} {user.username} ')
                         error_msg = ''
-                        if max_nodes > 0 and max_nodes <= orgAccountObj.admin_max_node_cap:
+                        if max_nodes > 0 and max_nodes <= clusterObj.admin_max_node_cap:
                             if min_nodes >= 0 and min_nodes <= max_nodes:
-                                orgAccountObj.min_node_cap = min_nodes
-                                orgAccountObj.max_node_cap = max_nodes
-                                orgAccountObj.save(update_fields=['min_node_cap', 'max_node_cap'])
-                                jrsp = {'status': "SUCCESS","msg":f"updated min-max nodes for {org_name} {user.username} to {orgAccountObj.min_node_cap}-{orgAccountObj.max_node_cap}"}
+                                clusterObj.cfg_asg.min = min_nodes
+                                clusterObj.cfg_asg.max = max_nodes
+                                clusterObj.provision_env_ready = False # force a SetUp i.e. configure
+                                clusterObj.save(update_fields=['min_node_cap', 'max_node_cap'])
+                                jrsp = {'status': "SUCCESS","msg":f"updated min-max nodes for {name} {user.username} to {clusterObj.cfg_asg.min}-{clusterObj.cfg_asg.max}"}
                             else:
                                 http_status = status.HTTP_400_BAD_REQUEST
-                                error_msg = f"INVALID min_nodes provided:{min_nodes} must be >= 0 and <= max_node given (i.e. {max_nodes}) and <= {orgAccountObj.admin_max_node_cap}"
+                                error_msg = f"INVALID min_nodes provided:{min_nodes} must be >= 0 and <= max_node given (i.e. {max_nodes}) and <= {clusterObj.admin_max_node_cap}"
                         else:
                             http_status = status.HTTP_400_BAD_REQUEST
-                            error_msg = f"INVALID max_nodes provided:{max_nodes} must be > 0 and <= {orgAccountObj.admin_max_node_cap}"
+                            error_msg = f"INVALID max_nodes provided:{max_nodes} must be > 0 and <= {clusterObj.admin_max_node_cap}"
                         if error_msg != '':
                             jrsp = {'status': "FAILED","error_msg":f"{error_msg}"}
                     else:
@@ -379,12 +379,13 @@ class ClusterConfigView(generics.UpdateAPIView):
 
 class NumNodesView(generics.RetrieveAPIView):
     '''
-    Takes an org_name and returns the min-current-max number of nodes and the version from the cluster for the org.
+    Takes an org_name cluster_name and returns the min-current-max number of nodes and the version from the cluster for the org.
     '''
     serializer_class = DummySerializer
-    def get(self, request, org_name, *args, **kwargs):
+    def get(self, request, name, cluster_name, *args, **kwargs):
         try:
-            orgAccountObj = OrgAccount.objects.get(name=org_name)
+            orgAccountObj = OrgAccount.objects.get(name=name)
+            clusterObj = NodeGroup.objects.get(org=orgAccountObj,name=cluster_name)
         except:
             jrsp = {'status': "FAILED","error_msg":f"Unknown org:{org_name}"}
             return Response(jrsp, status=status.HTTP_400_BAD_REQUEST)        
@@ -392,12 +393,11 @@ class NumNodesView(generics.RetrieveAPIView):
         if http_status == status.HTTP_200_OK:
             if active:
                 try:
-                    update_cur_num_nodes(orgAccountObj)
-                    clusterObj = Cluster.objects.get(org=orgAccountObj)
+                    update_cur_num_nodes(clusterObj)
                     if clusterObj.is_deployed:
-                        jrsp = {'status': "SUCCESS",'min_nodes':orgAccountObj.min_node_cap,'current_nodes': clusterObj.cur_nodes, 'max_nodes':orgAccountObj.max_node_cap, 'version':clusterObj.cur_version}
+                        jrsp = {'status': "SUCCESS",'min_nodes':clusterObj.cur_asg.min,'current_nodes': clusterObj.cur_asg.num, 'max_nodes':clusterObj.cur_asg.max, 'version':clusterObj.cur_version}
                     else:
-                        jrsp = {'status': "SUCCESS",'min_nodes':orgAccountObj.min_node_cap,'current_nodes': 0, 'max_nodes':orgAccountObj.max_node_cap, 'version':clusterObj.cur_version}
+                        jrsp = {'status': "SUCCESS",'min_nodes':clusterObj.cur_asg.min,'current_nodes': 0, 'max_nodes':clusterObj.cur_asg.max, 'version':clusterObj.cur_version}
                     http_status = status.HTTP_200_OK
                 except:
                     LOG.exception("caught exception:")

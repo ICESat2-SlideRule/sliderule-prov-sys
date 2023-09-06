@@ -19,14 +19,14 @@ from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.db.models import Q
 import grpc
 from users import ps_client
-from .models import Cluster, GranChoice, Membership, OrgAccount, OrgCost, User, OrgNumNode, PsCmdResult
+from .models import NodeGroup, Membership, OrgAccount, Cost
 import requests
 from api.tokens import OrgRefreshToken
 from api.serializers import MembershipSerializer
 from rest_framework_simplejwt.settings import api_settings
 from django_celery_results.models import TaskResult
-from .tasks import get_ps_versions, get_org_queue_name_str, get_org_queue_name, forever_loop_main_task, getGranChoice, set_PROVISIONING_DISABLED, get_PROVISIONING_DISABLED, RedisInterface
-from oauth2_provider.models import AbstractApplication
+from .tasks import get_ps_versions, get_cluster_queue_name_str, get_cluster_queue_name, forever_loop_main_task, getGranChoice, set_PROVISIONING_DISABLED, get_PROVISIONING_DISABLED, RedisInterface, init_new_org_memberships
+from oauth2_provider.models import Application
 from users.global_constants import *
 
 
@@ -91,11 +91,11 @@ def searchMemberships(request):
 
     return objs, search_query
 
-def get_db_org_cost(gran, orgAccountObj):
+def get_db_cluster_cost(gran, clusterObj):
     granObj = getGranChoice(granularity=gran)
-    LOG.info("%s %s", orgAccountObj.name,granObj.granularity)
+    LOG.info(f"{clusterObj} {granObj.granularity}")
     try:
-        orgCost_qs0 = OrgCost.objects.filter(org=orgAccountObj)
+        orgCost_qs0 = Cost.objects.filter(object_id=clusterObj.id)
         # LOG.info(repr(orgCost_qs0))
         # LOG.info(orgCost_qs0[0].org.id)
         # LOG.info(orgCost_qs0[0].org.name)
@@ -106,11 +106,11 @@ def get_db_org_cost(gran, orgAccountObj):
         #LOG.info(repr(orgCostObj))
         return True, orgCostObj
     except ObjectDoesNotExist as e:
-        emsg = orgAccountObj.name + " " + gran+" report does not exist?"
+        emsg = f"{clusterObj} {gran} report does not exist?"
         LOG.error(emsg)
         return False, None
     except Exception as e:
-        emsg = orgAccountObj.name + " " + gran+" report does not exist?"
+        emsg = f"{clusterObj} {gran} report does not exist?"
         LOG.exception(emsg)
         return False, None
 
@@ -132,7 +132,7 @@ def testit():
 
 
 
-def getConsoleText(orgAccountObj, rrsp):
+def getConsoleText(rrsp):
     console_text = ''
     has_error = False
     if(rrsp.cli.valid):
@@ -165,86 +165,12 @@ def get_new_tokens(org):
         'access_lifetime': str(api_settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
     }
 
-# def fetch_current_token(orgAccountObj):
-#     #LOG.info(orgAccountObj.tokens)
-#     tokens = orgAccountObj.tokens
-#     tokens_time = orgAccountObj.tokens_time
-#     now = datetime.now(tz=timezone.utc)
-#     need_refresh = False
-#     if( (type(tokens) is dict) and (tokens is not None) ):
-#         seconds = float(tokens['access_lifetime'])
-#         # LOG.info(" --- is dictionary and not None --- seconds:%f",seconds)
-#         # LOG.info(tokens_time)
-#         # LOG.info(timedelta(seconds=seconds))
-#         # LOG.info(now)
-#         if (tokens_time + timedelta(seconds=seconds)) < now:
-#             need_refresh = True
-#     else:
-#         #LOG.info(" --- is NOT dictionary or None --- ")
-#         need_refresh = True
-
-#     if need_refresh:
-#         orgAccountObj.tokens = get_new_tokens(orgAccountObj)
-#         #LOG.info(str(orgAccountObj.tokens))
-#         orgAccountObj.tokens_time = datetime.now(tz=timezone.utc)
-#         orgAccountObj.save(update_fields=['tokens','tokens_time'])
-#     #LOG.info(orgAccountObj.tokens)
-#     return orgAccountObj.tokens
-
-# def process_cluster_connection_status(orgAccountObj):
-#     task_id= 'unset'
-#     try:
-#         clusterObj = Cluster.objects.get(org=orgAccountObj) 
-#         LOG.info("%s %s",task_id,orgAccountObj.name)
-#         clusterObj.connection_status = "unknown"
-#         clusterObj = Cluster.objects.get(org=orgAccountObj)
-#         clusterObj.version_query_log  = ""
-#         clusterObj.save()
-#         domain = os.environ.get("DOMAIN")
-#         url = "https://"+ orgAccountObj.name + "." + domain + "/source/version"
-#         bearer_token_header = "Bearer " + str(fetch_current_token(orgAccountObj)['access'])
-#         headers = {"Authorization": bearer_token_header}
-#         THIS_TIMEOUT = 5
-#         clusterObj.version_query_log  = "*** attempt connection check using timeout:"+ str(THIS_TIMEOUT)+ " " + repr(url) +" ***\n"
-#         clusterObj.save()
-#         result = requests.get(url,headers=headers, timeout = THIS_TIMEOUT)
-#         LOG.info(result.json())
-#         if result.status_code == 200:
-#             clusterObj.connection_status = "good"
-#             clusterObj.version_query_log = clusterObj.version_query_log + '*** connection check result: '+ str(result.json())
-#             clusterObj.save()
-#         else:
-#             clusterObj.connection_status = "bad"
-#             clusterObj.version_query_log = clusterObj.version_query_log + '*** connection check result: '+ str(result.json())
-#             clusterObj.save()
-
-#     except requests.exceptions.ConnectionError as e:
-#         clusterObj.connection_status = "bad"
-#         LOG.info(repr(e))
-#         clusterObj.version_query_log = clusterObj.version_query_log + '\n' + repr(e)
-#         clusterObj.save()
-#     except json.JSONDecodeError as e:
-#         clusterObj.connection_status = "bad"
-#         LOG.info(repr(e))
-#         clusterObj.version_query_log = clusterObj.version_query_log + '\n' + repr(e)
-#         clusterObj.save()
-
-#     except Exception as e:
-#         clusterObj.connection_status = "bad"
-#         LOG.exception(f"Caught an exception: {e}")       
-#         clusterObj.version_query_log = clusterObj.version_query_log + '\n' + repr(e)
-#         clusterObj.save()
-#     finally:
-#         LOG.info("%s >>>>>> done connection status <<<<<< ",task_id)
-#     for handler in LOG.handlers:
-#        handler.flush()
-
-def create_org_queue(orgAccountObj):
+def create_cluster_queue(clusterObj):
     hostname = socket.gethostname()
     LOG.info(f"hostname:{hostname}")
-    qn = get_org_queue_name_str(orgAccountObj.name)
+    qn = get_cluster_queue_name_str(clusterObj.__str__()) # Unique queue name for this cluster with org prefix
     LOG.info(f"creating queue {qn}")
-    SHELL_CMD=f"celery -A ps_web worker -n {orgAccountObj.name}@{hostname} -l error -E -Q {qn} --concurrency=1".split(" ")
+    SHELL_CMD=f"celery -A ps_web worker -n {qn}@{hostname} -l error -E -Q {qn} --concurrency=1".split(" ")
     LOG.info(f"subprocess--> {SHELL_CMD}")
     return subprocess.Popen(SHELL_CMD)
 
@@ -280,80 +206,29 @@ def init_celery():
     LOG.info(f"subprocess--> {SHELL_CMD}")
     subprocess.Popen(SHELL_CMD)
 
-    orgs_qs = OrgAccount.objects.all()
-    LOG.info("orgs_qs:%s", repr(orgs_qs))
-    for orgAccountObj in orgs_qs:
+    clusters_qs = NodeGroup.objects.all()
+    LOG.info("clusters_qs:%s", repr(clusters_qs))
+    for clusterObj in clusters_qs:
         try:
-            if orgAccountObj.name == 'uninitialized':
+            if clusterObj.name == 'uninitialized':
                 LOG.error(f"Ignoring uninitialized OrgAccount.id:{OrgAccount.id}")
             else:
-                p = create_org_queue(orgAccountObj)
-                orgAccountObj.loop_count = 0 # reset this but not the others
-                orgAccountObj.num_ps_cmd = 0
-                orgAccountObj.num_ps_cmd_successful = 0
-                orgAccountObj.num_owner_ps_cmd = 0
-                orgAccountObj.num_onn = 0
-                orgAccountObj.save(update_fields=['loop_count','num_ps_cmd','num_ps_cmd_successful','num_owner_ps_cmd','num_onn'])
-                loop_count = orgAccountObj.loop_count
-                LOG.info(f"Entering forever loop for {orgAccountObj.name} at loop_count:{orgAccountObj.loop_count} num_ps_cmd:{orgAccountObj.num_ps_cmd_successful}/{orgAccountObj.num_ps_cmd} num_onn:{orgAccountObj.num_onn}")
-                clusterObj = Cluster.objects.get(org=orgAccountObj)
+                p = create_cluster_queue(clusterObj)
+                clusterObj.loop_count = 0 # reset this but not the others
+                clusterObj.num_ps_cmd = 0
+                clusterObj.num_ps_cmd_successful = 0
+                clusterObj.num_owner_ps_cmd = 0
+                clusterObj.num_onn = 0
+                clusterObj.save(update_fields=['loop_count','num_ps_cmd','num_ps_cmd_successful','num_owner_ps_cmd','num_onn'])
+                loop_count = clusterObj.loop_count
+                LOG.info(f"Entering forever loop for {clusterObj} at loop_count:{clusterObj.loop_count} num_ps_cmd:{clusterObj.num_ps_cmd_successful}/{clusterObj.num_ps_cmd} num_onn:{clusterObj.num_onn}")
                 clusterObj.provision_env_ready = False # this forces a SetUp 
                 clusterObj.save(update_fields=['provision_env_ready'])
-                LOG.info(f"Setting provision_env_ready to False to force initialization for {orgAccountObj.name} at loop_count:{orgAccountObj.loop_count} num_ps_cmd:{orgAccountObj.num_ps_cmd_successful}/{orgAccountObj.num_ps_cmd} num_onn:{orgAccountObj.num_onn}")
-                forever_loop_main_task.apply_async((orgAccountObj.name,loop_count),queue=get_org_queue_name(orgAccountObj))
+                LOG.info(f"Setting provision_env_ready to False to force initialization for {clusterObj} at loop_count:{clusterObj.loop_count} num_ps_cmd:{clusterObj.num_ps_cmd_successful}/{clusterObj.num_ps_cmd} num_onn:{clusterObj.num_onn}")
+                forever_loop_main_task.apply_async((clusterObj.__str__(),loop_count),queue=get_cluster_queue_name(clusterObj))
         except Exception as e:
             LOG.error(f"Caught an exception creating queues: {e}")
         LOG.info(f"forked subprocess--> {SHELL_CMD}")
-
-def get_ps_server_versions():
-    '''
-        This will call the ps_server and get GIT and sw versions then set env variable to use by views.py
-    '''
-    PS_SERVER_DOCKER_TAG="unknown"
-    PS_SERVER_GIT_VERSION="unknown"
-    try:
-        #LOG.info(f"{os.environ}")
-        EFILE=os.path.join('/tmp', '.ps_server_versions') # temporary file to store env vars
-        open(file=EFILE,mode='w').write(str(get_ps_versions()))
-        environ.Env.read_env(env_file=EFILE)
-        PS_SERVER_DOCKER_TAG = os.environ.get("PS_SERVER_DOCKER_TAG")
-        PS_SERVER_GIT_VERSION = os.environ.get("PS_SERVER_GIT_VERSION")
-        LOG.info("environ PS_SERVER_DOCKER_TAG:%s",PS_SERVER_DOCKER_TAG)
-        LOG.info("environ PS_SERVER_GIT_VERSION:%s",PS_SERVER_GIT_VERSION)
-    except Exception as e:
-        PS_SERVER_DOCKER_TAG ="unknown"
-        PS_SERVER_GIT_VERSION = "unknown"
-        LOG.exception("caught exception:")
-    #LOG.info(f"{os.environ}")
-    return PS_SERVER_DOCKER_TAG,PS_SERVER_GIT_VERSION
-
-def get_ps_server_versions_from_env():
-    '''
-        This will call the ps_server and get GIT and sw versions then set env variable to use by views.py
-    '''
-    PS_SERVER_DOCKER_TAG="unknown"
-    PS_SERVER_GIT_VERSION="unknown"
-    EFILE=os.path.join('/tmp', '.ps_server_versions') # temporary file to store env vars
-    try:
-        environ.Env.read_env(env_file=EFILE)
-        PS_SERVER_DOCKER_TAG = os.environ.get("PS_SERVER_DOCKER_TAG",'unknown')
-        PS_SERVER_GIT_VERSION = os.environ.get("PS_SERVER_GIT_VERSION",'unknown')
-        #LOG.info("environ PS_SERVER_DOCKER_TAG:%s",PS_SERVER_DOCKER_TAG)
-        #LOG.info("environ PS_SERVER_GIT_VERSION:%s",PS_SERVER_GIT_VERSION)
-    except FileNotFoundError:
-        LOG.info(f"{EFILE} does not exist;  calling ps_server to get versions")
-        try:
-            # This should only happen once after the web server is started. 
-            # The file is fetched in get_ps_server_versions() if it does not exist
-            get_ps_server_versions()            
-        except Exception as e:
-            LOG.exception("caught exception:")
-            raise
-    except Exception as e:
-        LOG.exception("caught exception:")
-
-    #LOG.info(f"{os.environ}")
-    return PS_SERVER_DOCKER_TAG,PS_SERVER_GIT_VERSION
 
 def get_memberships(request):
     membershipObjs = Membership.objects.filter(user=request.user,active=True)
@@ -362,3 +237,55 @@ def get_memberships(request):
         if m.org is not None:
             memberships.append(m.org.name)
     return memberships
+def add_obj_cost(f):
+    '''
+        This adds an OrgAccount or NodeGroup object and the associated Cost objects
+    '''
+    emsg=''
+    msg=''
+    p=None
+    new_obj=None
+    try:
+        start_main_loop = start_main_loop or False
+        init_accounting_tm = datetime.now(timezone.utc)-timedelta(days=366) # force update
+        if f.is_valid():
+            new_obj = f.save(commit=False)
+            new_obj.most_recent_charge_time=init_accounting_tm
+            new_obj.most_recent_credit_time=init_accounting_tm
+            new_obj.save()
+            granObjHr = getGranChoice(granularity="HOURLY")
+            orgCostHr = Cost.objects.create(content_object=new_obj, gran=granObjHr, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
+            #LOG.info(orgCostHr.tm)
+            orgCostHr.save()
+            granObjDay = getGranChoice(granularity="DAILY")
+            orgCostDay = Cost.objects.create(content_object=new_obj, gran=granObjDay, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
+            orgCostDay.save()
+            granObjMonth = getGranChoice(granularity="MONTHLY")
+            orgCostMonth = Cost.objects.create(content_object=new_obj, gran=granObjMonth, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
+            orgCostMonth.save()
+            LOG.info(f"added obj:{new_obj.name}")
+        else:
+            emsg = f"Input Errors:{f.errors.as_text}"
+    except Exception as e:
+        LOG.exception("caught exception:")
+        emsg = "Caught exception:"+repr(e)
+    
+    return new_obj,msg,emsg
+
+def add_org_cost(f):
+    new_org,msg,emsg = add_obj_cost(f)
+    msg = init_new_org_memberships(new_org)
+    return new_org,msg,emsg
+
+def add_cluster_cost(f,start_main_loop=False):
+    new_cluster,msg,emsg = add_obj_cost(f)
+    p = create_cluster_queue(new_cluster)
+    if start_main_loop:
+        forever_loop_main_task.apply_async((new_cluster.__str__(),0),queue=get_cluster_queue_name(new_cluster))
+    # always add this to the OAUTH app (only one exists anyway)
+    for app in Application.objects.all():
+        domain = os.environ.get("DOMAIN")
+        # new_cluster.__str__() has <org_name>-<cluster_name>
+        app.redirect_uris += '\n{}'.format(f"https://{new_cluster.__str__()}.{domain}/redirect_uri/")
+        app.save()
+    return new_cluster,msg,emsg

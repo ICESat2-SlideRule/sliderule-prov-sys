@@ -15,7 +15,7 @@
 <div class="container-fluid text-center">
     <div class="row py-2">
         <div class="col py-2">
-            <h3>{{org.name}} Account History</h3>
+            <h3>{{cluster.org.name}}-{{cluster.name}} Account History</h3>
             <div class="container text-center shadow-lg">
                 <div class="row py-2">
                     <div class="chart-container">
@@ -47,21 +47,21 @@
     <div class="row py-2">
         <div class="col py-2">
             <div class="row py-2">
-                <div class="accordion shadow" id="account_history_accordian_{{org.name}}"> 
+                <div class="accordion shadow" id="account_history_accordian_{{org.name}}_{{cluster.name}}"> 
                     <div class="accordian-item shadow">
-                        <h2 class="accordian-header" id="ah_ah_{{org.name}}_account">
-                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_account" aria-expanded="true" aria-controls="collapse_{{org.name}}_account">
-                                {{org.name}} Account 
+                        <h2 class="accordian-header" id="ah_ah_{{org.name}}_{{cluster.name}}_account">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_{{cluster.name}}_account" aria-expanded="true" aria-controls="collapse_{{org.name}}_{{cluster.name}}_account">
+                                {{cluster.org.name}}-{{cluster.name}} Account 
                             </button>
                         </h2>                                             
-                        <div id="collapse_{{org.name}}_account" class="accordion-collapse collapse" aria-labelledby="ah_hd_{{org.name}}_account" data-bs-parent="#account_history_accordion_{{org.name}}">
+                        <div id="collapse_{{org.name}}_{{cluster.name}}_account" class="accordion-collapse collapse" aria-labelledby="ah_hd_{{org.name}}_{{cluster.name}}_account" data-bs-parent="#account_history_accordion_{{org.name}}_{{cluster.name}}">
                             <div class="accordion-body">
                                 <div class="container-fluid">
                                     <div class="container-fluid overflow-auto">
                                         <div class="row">
                                             <dl>
                                                 <dt>Owner</dt>
-                                                <dd>{{org.owner.first_name}} {{org.owner.last_name}}</dd>
+                                                <dd>{{cluster.org.owner.first_name}} {{cluster.org.owner.last_name}}</dd>
                                                 <dt>Current Balance</dt>
                                                 <dd>{{cluster.balance}}</dd>
                                                 <dt>Refreshed</dt>
@@ -94,19 +94,19 @@
         var gselected = $("#granularity").find(":selected").text();
         $("#granularity").change(function() {
             gselected = $(this).find(":selected").text();
-            sessionStorage.setItem('{{org.name}}'+'gselected',gselected)
+            sessionStorage.setItem('{{org.name}}_{{cluster.name}}'+'gselected',gselected)
             request_data(gselected,tselected);
         });
         $("#type").change(function() {
             tselected = $(this).find(":selected").text();
-            sessionStorage.setItem('{{org.name}}'+'tselected',tselected)
+            sessionStorage.setItem('{{org.name}}_{{cluster.name}}'+'tselected',tselected)
             request_data(gselected,tselected);
         });
-        gselected = sessionStorage.getItem('{{org.name}}'+'gselected')
+        gselected = sessionStorage.getItem('{{org.name}}_{{cluster.name}}'+'gselected')
         if((gselected == '') ||  (gselected == null)){
             gselected = 'Hourly'
         }
-        tselected = sessionStorage.getItem('{{org.name}}'+'tselected')
+        tselected = sessionStorage.getItem('{{org.name}}_{{cluster.name}}'+'tselected')
         if((tselected == '') ||  (tselected == null)){
             tselected = 'Line'
         }
@@ -134,7 +134,7 @@
             $.ajax({
                 headers: { "X-CSRFToken": csrftoken },
                 mode: 'same-origin', // Do not send CSRF token to another domain.
-                url: "{% url 'ajax-org-account-history' %}",
+                url: "{% url 'ajax-cluster-account-history' %}",
                 data: {"org_uuid":  uuid, "granularity":gran.toUpperCase()},
                 type: "GET",
                 dataType:"json",

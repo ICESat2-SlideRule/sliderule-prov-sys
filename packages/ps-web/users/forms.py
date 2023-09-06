@@ -1,7 +1,7 @@
 from django import forms
 from django.forms import ModelForm
 from django.contrib.auth.forms import UserCreationForm, UsernameField, UserChangeForm
-from .models import Membership, OrgAccount, Cluster, User, OrgNumNode
+from .models import Membership, OrgAccount, NodeGroup, User, ClusterNumNode, ASGNodeLimits, Budget
 from captcha.fields import CaptchaField
 from datetime import datetime,timedelta
 from datetime import timezone
@@ -63,21 +63,12 @@ class UserProfileForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-# def desired_num_nodes_validator(min_nodes,max_nodes):
-#     def _desired_num_nodes_validator(value):
-#         if min_nodes == 0:
-#             min = 1
-#         else:
-#             min = min_nodes
-#         if value < min or value > max_nodes:
-#             raise ValidationError(f'desired_num_nodes must be between {min} and {max_nodes}')
-#     return _desired_num_nodes_validator
 
-class OrgNumNodeForm(forms.ModelForm):
+class ClusterNumNodeForm(forms.ModelForm):
     ttl_minutes = forms.IntegerField(required=True, min_value=0, label='TTL minutes')
 
     class Meta:
-        model = OrgNumNode
+        model = ClusterNumNode
         fields = ['desired_num_nodes']
 
     def __init__(self, *args, **kwargs):    
@@ -107,14 +98,39 @@ class MembershipForm(forms.Form):
     active = forms.BooleanField(required=False)
     delete = forms.BooleanField(required=False)
 
-
-class OrgAccountForm(ModelForm):
+class BudgetForm(forms.ModelForm):
     class Meta:
-        model = OrgAccount
-        fields = ['owner', 'name', 'point_of_contact_name', 'email', 'max_allowance',
-                  'monthly_allowance', 'balance', 'admin_max_node_cap','is_public']
+        model = Budget
+        fields = ['max_allowance', 'monthly_allowance', 'balance']
 
-class OrgAccountCfgForm(ModelForm):
+class ClusterForm(ModelForm):
+    '''
+        For creating a new cluster
+    '''
+    class Meta:
+        model = NodeGroup
+        fields = [ 'name', 'org', 'node_mgr_fixed_cost', 'node_fixed_cost']
+        readonly_fields = ['org']
+
+class ASGNodeLimitsForm(ModelForm):
+    '''
+        For creating an Auto Scaling Group node limits object
+    '''
+    def __init__(self, *args, **kwargs):
+        max_value = NodeGroup.ABS_MAX_NODES
+        width = len(str(max_value))
+        self.fields['min_node_cap'].widget = NumberInput(attrs={'style': f'width: {width}em'})
+        self.fields['max_node_cap'].widget = NumberInput(attrs={'style': f'width: {width}em'})
+        super().__init__(*args, **kwargs)
+
+    class Meta:
+        model = ASGNodeLimits
+        fields = ['min', 'num', 'max']
+
+class ClusterCfgForm(ModelForm):
+    '''
+    For configuring an existing cluster
+    '''
     version = forms.ChoiceField(widget=forms.Select(attrs={'id': 'version'}))
     is_public = forms.BooleanField(required=False, widget=forms.CheckboxInput(attrs={'id': 'is_public'}))
     def __init__(self, *args, **kwargs):
@@ -122,27 +138,20 @@ class OrgAccountCfgForm(ModelForm):
         super().__init__(*args, **kwargs)
         if available_versions:
             self.fields['version'].choices = [(v, v) for v in available_versions]
-
-        max_value = OrgAccount.ABS_MAX_NODES
-        width = len(str(max_value))
-        self.fields['min_node_cap'].widget = NumberInput(attrs={'style': f'width: {width}em'})
-        self.fields['max_node_cap'].widget = NumberInput(attrs={'style': f'width: {width}em'})
-
     class Meta:
-        model = OrgAccount
-        fields = ['provisioning_suspended','is_public', 'version', 'min_node_cap', 'max_node_cap', 'allow_deploy_by_token', 'destroy_when_no_nodes' ]
-
+        model = NodeGroup
+        fields = ['provisioning_suspended','is_public', 'version', 'allow_deploy_by_token', 'destroy_when_no_nodes' ]
+        readonly_fields = ['cfg_asg']
 
 class OrgProfileForm(ModelForm):
     class Meta:
         model = OrgAccount
         fields = ['point_of_contact_name', 'email', ]
 
-
-class ClusterForm(ModelForm):
+class OrgAccountForm(ModelForm):
     class Meta:
-        model = Cluster
-        fields = '__all__'
+        model = OrgAccount
+        fields = ['owner', 'name', 'point_of_contact_name', 'email']
 
 class CustomLoginForm(LoginForm):
     def __init__(self, *args, **kwargs):

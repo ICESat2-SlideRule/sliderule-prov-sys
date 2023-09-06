@@ -9,10 +9,10 @@ from importlib import import_module
 from datetime import datetime, timezone, timedelta
 from decimal import *
 from django.urls import reverse,resolve
-from users.tests.utilities_for_unit_tests import init_test_environ,get_test_org,initialize_test_org
+from users.tests.utilities_for_unit_tests import init_test_environ,get_test_org,get_test_compute_cluster,initialize_test_org
 from users.tests.utilities_for_unit_tests import TEST_EMAIL,TEST_ORG_NAME,TEST_PASSWORD,TEST_USER,DEV_TEST_EMAIL,DEV_TEST_PASSWORD,DEV_TEST_USER,OWNER_USER,OWNER_PASSWORD,OWNER_EMAIL
 
-from users.models import Membership,Cluster,OrgAccount
+from users.models import Membership,NodeGroup,OrgAccount
 from users.tasks import init_new_org_memberships
 
 module_name = 'views'
@@ -47,14 +47,14 @@ def teardown_module(tasks_module):
 #@pytest.mark.dev
 @pytest.mark.django_db
 @pytest.mark.ps_server_stubbed
-def test_config_org(caplog,client,mock_email_backend,initialize_test_environ):
+def test_config_cluster(caplog,client,mock_email_backend,initialize_test_environ):
     '''
         This procedure will test the config min-max nodes api
     '''
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+    clusterObj = get_test_compute_cluster()
 
     url = reverse('org-token-obtain-pair')
 
@@ -71,43 +71,48 @@ def test_config_org(caplog,client,mock_email_backend,initialize_test_environ):
         'Accept': 'application/json'  # Specify JSON response
     }
     # negative test POST
-    url = reverse('org-cfg',args=[get_test_org().name,0,5])
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,0,5])
     response = client.post(url)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     assert (response.status_code == 405)  
 
     # negative test no Token
-    url = reverse('org-cfg',args=[get_test_org().name,0,5])
+
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,0,5])
     response = client.put(url)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     assert (response.status_code == 400)  
 
     # now test config with valid values
-    url = reverse('org-cfg',args=[get_test_org().name,0,5])
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,0,5])
     response = client.put(url,headers=headers)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     orgAccountObj.refresh_from_db()
+    clusterObj.refresh_from_db()
     assert(response.status_code == 200)   
-    assert(orgAccountObj.min_node_cap == 0)
-    assert(orgAccountObj.max_node_cap == 5)
+    assert(clusterObj.cfg_asg.min == 0)
+    assert(clusterObj.cfg_asg.max == 5)
 
     # now test config with valid values
-    url = reverse('org-cfg',args=[get_test_org().name,0,orgAccountObj.admin_max_node_cap])
+
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,0,clusterObj.admin_max_node_cap])
     response = client.put(url,headers=headers)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     orgAccountObj.refresh_from_db()
+    clusterObj.refresh_from_db()
     assert(response.status_code == 200)   
-    assert(orgAccountObj.min_node_cap == 0)
-    assert(orgAccountObj.max_node_cap == orgAccountObj.admin_max_node_cap)
+    assert(clusterObj.cfg_asg.min == 0)
+    assert(clusterObj.cfg_asg.max == clusterObj.admin_max_node_cap)
 
     # now test config with INVALID: max is 0
-    url = reverse('org-cfg',args=[get_test_org().name,0,0])
+
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,0,0])
     response = client.put(url,headers=headers)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     assert (response.status_code == 400)
 
     # now test config with INVALID: max is max_admin + 1
-    url = reverse('org-cfg',args=[get_test_org().name,0,orgAccountObj.max_node_cap+1])
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,0,clusterObj.cfg_asg.max+1])
     response = client.put(url,headers=headers)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     assert (response.status_code == 400)
@@ -123,7 +128,7 @@ def test_config_org(caplog,client,mock_email_backend,initialize_test_environ):
     assert (response.status_code == 404)
 
     # now test config with INVALID: max < min
-    url = reverse('org-cfg',args=[get_test_org().name,2,1])
+    url = reverse('cluster-cfg',args=[get_test_org().name,clusterObj.name,2,1])
     response = client.put(url,headers=headers)
     logger.info(f"status:{response.status_code} response:{response.json()}")
     assert (response.status_code == 400)
@@ -136,7 +141,7 @@ def test_membership_status(caplog,client,mock_email_backend,initialize_test_envi
         This procedure will test the membership status api
     '''
     orgAccountObj = get_test_org()
-    clusterObj = Cluster.objects.get(org=orgAccountObj)
+    clusterObj = get_test_compute_cluster()
 
     url = reverse('org-token-obtain-pair')
 
@@ -155,6 +160,7 @@ def test_membership_status(caplog,client,mock_email_backend,initialize_test_envi
     rsp_body = response.json()
     logger.info(f"status:{response.status_code} response:{rsp_body}")
     orgAccountObj.refresh_from_db()
+    clusterObj.refresh_from_db()
     assert(response.status_code == 200)
     assert(rsp_body['active'] == True)   
 
@@ -163,6 +169,7 @@ def test_membership_status(caplog,client,mock_email_backend,initialize_test_envi
     rsp_body = response.json()
     logger.info(f"status:{response.status_code} response:{rsp_body}")
     orgAccountObj.refresh_from_db()
+    clusterObj.refresh_from_db()
     assert(response.status_code == 400)
     assert(rsp_body['status'] == 'FAILED')
     assert('Unknown org' in rsp_body['error_msg'])   
@@ -177,6 +184,7 @@ def test_membership_status(caplog,client,mock_email_backend,initialize_test_envi
     rsp_body = response.json()
     logger.info(f"status:{response.status_code} response:{rsp_body}")
     orgAccountObj.refresh_from_db()
+    clusterObj.refresh_from_db()
     assert(response.status_code == 400)
     assert(rsp_body['status'] == 'FAILED')
     emsg = f"Token claim org:{orgAccountObj.name} does not match organization given:{PUBLIC_ORG} "

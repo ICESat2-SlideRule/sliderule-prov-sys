@@ -6,7 +6,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 # Register your models here.
-from .models import User, OrgAccount, Membership, Cluster, OrgCost, OrgNumNode, PsCmdResult, OwnerPSCmd
+from .models import User, OrgAccount, Membership, NodeGroup, Cost, ClusterNumNode, PsCmdResult, OwnerPSCmd
 from .models import GranChoice,PsCmdResult
 from django.contrib.auth import get_user_model
 
@@ -40,43 +40,36 @@ class MembershipAdmin(admin.ModelAdmin):
 
 @admin.register(OrgAccount)
 class OrgAccountAdmin(admin.ModelAdmin):
-    list_display = ('name', 'owner', 'allow_deploy_by_token', 'max_allowance', 'monthly_allowance',
-                    'balance', 'max_hrly', 'cur_hrly', 'min_hrly', 'min_ddt', 'cur_ddt', 'max_ddt',
-                    'node_mgr_fixed_cost', 'node_fixed_cost',
-                    'desired_num_nodes', 'min_node_cap', 'max_node_cap', 'admin_max_node_cap',
-                    'most_recent_charge_time', 'most_recent_credit_time',
-                    'creation_date', 'modified_date', 'is_public', 'version', 'loop_count')
-    list_display_links = ['name']
-    list_filter = ('name', 'owner', 'allow_deploy_by_token', 'max_allowance', 'monthly_allowance',
-                   'balance', 'max_hrly', 'cur_hrly', 'min_hrly', 'min_ddt', 'cur_ddt', 'max_ddt',
-                   'node_mgr_fixed_cost', 'node_fixed_cost',
-                   'desired_num_nodes', 'min_node_cap', 'max_node_cap', 'admin_max_node_cap',
-                   'most_recent_charge_time', 'most_recent_credit_time',
-                   'creation_date', 'modified_date', 'is_public', 'version', 'loop_count')
+    list_display = ('name', 'owner', 'budget', 'creation_date', 'modified_date')
+    list_display_links = ['name','owner','budget']
+    list_filter = ('name', 'owner', 'budget', 'creation_date', 'modified_date')
     #readonly_fields = ('id')
 
 
-@admin.register(Cluster)
+@admin.register(NodeGroup)
 class ClusterAdmin(admin.ModelAdmin):
-    list_display = ('org', 'creation_date', 'modified_date','cur_min_node_cap','cur_max_node_cap','cur_version',
-                    'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state')
+    list_display = ('name', 'org', 'cur_asg', 'node_mgr_fixed_cost', 'node_fixed_cost', 'creation_date', 'modified_date','cur_version',
+                    'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state',
+                    'allow_deploy_by_token',)
 
-    list_filter = ('org', 'creation_date', 'modified_date','cur_min_node_cap','cur_max_node_cap','cur_version',
-                   'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state')
-    list_display_links = ['org']
-    readonly_fields = ['org','cur_nodes']
+    list_filter = ('name', 'org', 'node_mgr_fixed_cost', 'node_fixed_cost', 'creation_date', 'modified_date','cur_version',
+                   'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state',
+                    'allow_deploy_by_token',)
+    list_display_links = ['name','org','cur_asg']
+    readonly_fields = ['org','cur_asg']
 
-@admin.register(OrgCost)
-class OrgCostAdmin(admin.ModelAdmin):
-    list_display = ('org', 'creation_date', 'modified_date',
+@admin.register(Cost)
+class CostAdmin(admin.ModelAdmin):
+    list_display = ('content_object', 'creation_date', 'modified_date',
                     'gran', 'tm', 'cost_refresh_time', 'cnt', 'avg', 'min', 'max', 'std')
-    list_filter = ('org', 'creation_date', 'modified_date',
+    list_filter = ('content_object', 'creation_date', 'modified_date',
                    'gran', 'tm', 'cost_refresh_time', 'cnt', 'avg', 'min', 'max', 'std')
 
-@admin.register(OrgNumNode)
-class OrgNumNodeAdmin(admin.ModelAdmin):
-    list_display = ('org', 'desired_num_nodes', 'expiration', 'user')
-    list_filter = ('org', 'desired_num_nodes', 'expiration', 'user')
+@admin.register(ClusterNumNode)
+class ClusterNumNodeAdmin(admin.ModelAdmin):
+    list_display = ('cluster', 'desired_num_nodes', 'expiration', 'user')
+    list_filter = ('cluster', 'desired_num_nodes', 'expiration', 'user')
+    list_display_links = ['cluster']
 
 # Hackalert use a data fixture to populate static data then remove this
 @admin.register(GranChoice)
@@ -84,11 +77,11 @@ class GranChoiceAdmin(admin.ModelAdmin):
     list_display = ('granularity',)
 
 class PsCmdResultAdmin(admin.ModelAdmin):
-    list_display = ('org', 'creation_date', 'expiration', 'ps_cmd_summary_label_formatted', 'ps_cmd_output_formatted', 'error_formatted')
-    list_filter = ('org','creation_date','expiration')
-    search_fields = ('org__name', 'ps_cmd_summary_label', 'ps_cmd_output', 'error')
-    list_display_links = ['org']
-    readonly_fields = ['org','expiration','ps_cmd_summary_label_formatted', 'ps_cmd_output_formatted','error_formatted' ]
+    list_display = ('cluster', 'creation_date', 'expiration', 'ps_cmd_summary_label_formatted', 'ps_cmd_output_formatted', 'error_formatted')
+    list_filter = ('cluster','creation_date','expiration')
+    search_fields = ('cluster__name', 'ps_cmd_summary_label', 'ps_cmd_output', 'error')
+    list_display_links = ['cluster']
+    readonly_fields = ['cluster','expiration','ps_cmd_summary_label_formatted', 'ps_cmd_output_formatted','error_formatted' ]
 
     def ps_cmd_summary_label_formatted(self, obj):
         return format_html('<div style="max-height: 30px; overflow: auto;">{}</div>', mark_safe(obj.ps_cmd_summary_label))
@@ -107,7 +100,7 @@ admin.site.register(PsCmdResult, PsCmdResultAdmin)
 
 @admin.register(OwnerPSCmd)
 class OwnerPSCmdAdmin(admin.ModelAdmin):
-    list_display = ('user','org','ps_cmd','deploy_values','create_time')
-    list_display_links = ('user','org')
-    list_filter = ('user','org','ps_cmd','deploy_values','create_time')
-    readonly_fields = ('user','org','ps_cmd','deploy_values','create_time')
+    list_display = ('user','cluster','ps_cmd','deploy_values','create_time')
+    list_display_links = ('user','cluster')
+    list_filter = ('user','cluster','ps_cmd','deploy_values','create_time')
+    readonly_fields = ('user','cluster','ps_cmd','deploy_values','create_time')

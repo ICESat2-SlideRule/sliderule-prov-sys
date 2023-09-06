@@ -51,6 +51,7 @@ message Response {
   string  error_msg         = 6;  // error message at server level
   cli_rsp cli               = 7;  // terminal response of the command executed 
   StateOfCluster state      = 8;  // not in every msg but at end
+  string  cluster_name      = 9;  // name of cluster
 }
 
 // The response message from ps_server to ps_web (client)
@@ -77,31 +78,36 @@ message UpdateRequest {
   uint32  min_nodes = 2;
   uint32  max_nodes = 3;
   uint32  num_nodes = 4;
-  string  now       = 5; 
+  string  now       = 5;
+  string  cluster_name = 6; 
 }
 
 message RefreshRequest {
-  string  name  = 1; // terraform namespaced directory to use
-  string  now       = 2; 
+  string  name          = 1; // terraform namespaced directory to use
+  string  now           = 2;
+  string  cluster_name  = 3; 
 }
 
 message DestroyRequest {
-  string  name  = 1; // terraform namespaced directory to use
-  string  now       = 2; 
+  string  name          = 1; // terraform namespaced directory to use
+  string  now           = 2; 
+  string  cluster_name  = 3; 
 }
 // The SetUp Request message 
 message SetUpReq {
-  string  name  = 1; // terraform namespaced directory to use
-  string  version   = 2; // version of terraform files to use
-  bool    is_public = 3;
-  string  now       = 4; 
+  string  name          = 1; // terraform namespaced directory to use
+  string  version       = 2; // version of terraform files to use
+  bool    is_public     = 3;
+  string  now           = 4; 
+  string  cluster_name  = 5; 
 }
 
 // The TearDown Request message 
 message TearDownReq {
-  string  name  = 1; // terraform namespaced directory to use
-  string  version   = 2; // version of terraform files to use
-  string  now       = 3; 
+  string  name          = 1; // terraform namespaced directory to use
+  string  version       = 2; // version of terraform files to use
+  string  now           = 3; 
+  string  cluster_name  = 4; 
 }
 
 message Stats {
@@ -113,7 +119,7 @@ message Stats {
 }
 
 message CostAndUsageRsp{
-  string    name      = 1;
+  string    name          = 1;
   string    granularity   = 2;
   double    total         = 3;
   string    unit          = 4; 
@@ -122,23 +128,27 @@ message CostAndUsageRsp{
   Stats     stats         = 7;
   bool      server_error  = 8;
   string    error_msg     = 9; 
+  string    cluster_name  = 10;
 }
 
 message DailyHistCostReq{
-  string  name  = 1;
-  string  start_tm  = 2;
-  string  end_tm    = 3;
+  string  name          = 1;
+  string  start_tm      = 2;
+  string  end_tm        = 3;
+  string  cluster_name  = 4;
 }
 
 message TodaysCostReq{
-  string  name  = 1;
-  string  tm        = 2; 
+  string  name          = 1;
+  string  tm            = 2;
+  string  cluster_name  = 3; 
 }
 
 message CurrentCostReq{
-  string name     = 1;
+  string name         = 1;
   string granularity  = 2;
-  string tm           = 3; 
+  string tm           = 3;
+  string cluster_name = 4; 
 }
 
 message GetVersionsReq{}
@@ -147,7 +157,8 @@ message GetVersionsRsp{
 }
 
 message GetCurrentSetUpCfgReq{
-  string name = 1;
+  string name         = 1;
+  string cluster_name = 2;
 }
 
 message GetCurrentSetUpCfgRsp{
@@ -160,8 +171,9 @@ message GetPSVersionsRsp{
 }
 
 message InitReq{ // for testing only
-  string name = 1;
-  int32  num_nodes= 2;
+  string name         = 1;
+  int32  num_nodes    = 2;
+  string cluster_name = 3;
 }
 
 message InitRsp{
@@ -170,16 +182,18 @@ message InitRsp{
 }
 
 message NumNodesReq{ 
-  string name = 1;
-  string version  = 2;
-  string region   = 3;
+  string name         = 1;
+  string version      = 2;
+  string region       = 3;
+  string cluster_name = 4;
 }
 
 message NumNodesRsp{
-  string name     = 1;
+  string name         = 1;
   string version      = 2;
   string region       = 3;
   uint32 num_nodes    = 4;
+  string cluster_name = 5;
 }
 
 service Control {

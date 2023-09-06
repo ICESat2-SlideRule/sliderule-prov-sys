@@ -4,6 +4,7 @@ VERSION ?= latest
 DOCKER_TAG ?= $(VERSION)
 PYTEST_ARGS ?= 
 NGINX_CONF ?= dev
+DB_NAME ?= ps_postgres_db
 DB_BACKUP_DIR = $(ROOT)/db_backups
 PS_SERVER_SOURCE_DIR = $(ROOT)/../../packages/ps-server
 PS_WEB_SOURCE_DIR = $(ROOT)/../../packages/ps-web
@@ -292,7 +293,7 @@ db-down:
 
 db-drop: ##  (CAUTION!) drop the current test db in its docker volume e.g. make db-drop  NOTE:This drops the db named: ps_postgres_db 
 	docker compose -f docker-compose-prov-sys-db-only.yml up --detach && \
-	docker compose -f docker-compose-prov-sys-db-only.yml exec -it ps-db dropdb -i -e --username=ps_admin ps_postgres_db;
+	docker compose -f docker-compose-prov-sys-db-only.yml exec -it ps-db dropdb -i -e --username=ps_admin $(DB_NAME);
 	docker compose -f docker-compose-prov-sys-db-only.yml down 
 
 db-create-blank: #  create a blank test db in its docker volume e.g. make db-drop  NOTE:This drops the db named: ps_postgres_db 

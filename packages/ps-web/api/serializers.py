@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
-from users.models import Membership, OrgAccount, User, Cluster
+from users.models import Membership, OrgAccount, User, NodeGroup
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
 from rest_framework_simplejwt.settings import api_settings
 #from django.contrib.auth.models import update_last_login
@@ -43,7 +43,7 @@ class ClusterSerializer(serializers.ModelSerializer):
     org = OrgAccountSerializer()
 
     class Meta:
-        model = Cluster
+        model = NodeGroup
         fields = '__all__'
 
 

@@ -15,7 +15,7 @@ services:
     image: postgres:13
     container_name: ps-db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_v4:/var/lib/postgresql/data
     env_file:
       - .env
     ports:
@@ -23,31 +23,11 @@ services:
   redis:
     image: "redis:alpine"
     container_name: redis
+    volumes:
+      - ./temp_redis_data:/data
   django-app:
-    environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0   
-      - TZ=America/New_York
-      - SITE_ID=2
-      - PS_WEB_LOG_LEVEL=INFO
-      - ACCOUNT_DEFAULT_HTTP_PROTOCOL="http"
-      - CSRF_TRUSTED_ORIGINS=http://localhost
-      - DJANGO_ALLOWED_HOSTS=.localhost
-      - DOCKER_REPO=icesat2sliderule
-      - PS_SERVER_DOCKER_TAG=dev
-      - PS_WEB_DOCKER_TAG=dev
-      - PS_NGINX_DOCKER_TAG=dev
-      - POSTGRES_DB=ps_postgres_db
-      - POSTGRES_USER=ps_admin
-      - POSTGRES_PASSWORD=ps1234
-      - SQL_ENGINE=django.db.backends.postgresql
-      - SQL_HOST=ps-db
-      - SQL_PORT=5432
-      - DOMAIN=localhost
-      - PS_BLD_ENVVER=v0.0.0
-      - PYTEST_PLUGINS=celery.contrib.pytest
-      - GRPC_TIMEOUT_SECS=1800
-      - COOLOFF_SECS=0
-      - REDIS_HOST=redis
+    env_file:
+      - .env
     expose:
       - 8000
     image: ${DOCKER_REPO}/sliderule-ps-web:${PS_WEB_DOCKER_TAG}
@@ -72,8 +52,7 @@ services:
     depends_on:
       - django-app
 volumes:
-  postgres_data:
+  postgres_data_v4:
 networks:
   default:
-#    external: true
     name: ps_dev_network

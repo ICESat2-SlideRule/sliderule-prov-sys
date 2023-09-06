@@ -1,5 +1,6 @@
-# match the version of .venv if you have one
-FROM python:3.11
+# Build-time argument for Python version
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}
 
 # prevents Python from buffering stdout and stderr
 ENV PYTHONUNBUFFERED=1
@@ -9,8 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE 1
 
 # upgrade PIP as root user
 RUN pip install --upgrade pip
-# Install postgres client
-RUN apt-get update && apt-get install -y  postgresql-client
+# Install postgres client;clean up the cache after installing to reduce the image size
+RUN apt-get update && apt-get install -y postgresql-client && rm -rf /var/lib/apt/lists/*
 
 RUN adduser reg_user
 USER reg_user

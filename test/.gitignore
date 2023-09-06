@@ -1,4 +1,4 @@
-prov-sys/db_backups/sliderule-postgres-backup-*-DEV-latest*
+prov-sys/db_backups/sliderule-postgres-backup-*-DEV-*
 prov-sys/db_backups/sliderule-postgres-backup-test-*
 prov-sys/db_backups_SAVE
 volume

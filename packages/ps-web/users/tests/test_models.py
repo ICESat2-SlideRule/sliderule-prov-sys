@@ -1,7 +1,7 @@
 import pytest
 
 from django.utils.timezone import now
-from users.tasks import cost_accounting, get_or_create_OrgNumNodes
+from users.tasks import cost_accounting, get_or_create_ClusterNumNodes
 from users.models import OrgAccount
 from django.test.utils import setup_test_environment
 from django.urls import reverse
@@ -12,7 +12,7 @@ from .utilities_for_unit_tests import init_test_environ,random_test_user
 import logging
 LOG = logging.getLogger('test_console')
 
-class OrgNumNodesTest(GlobalTestCase):
+class ClusterNumNodesTest(GlobalTestCase):
     def setUp(self):
         #LOG.info(f"{__name__}({self}) ... ------------------")
         return super().setUp()
@@ -22,8 +22,8 @@ class OrgNumNodesTest(GlobalTestCase):
         return super().tearDown()
       
     #@pytest.mark.dev
-    def test_get_or_create_OrgNumNodes_001(self):
-        orgAccountObj,owner = init_test_environ(OrgNumNodesTest.test_get_or_create_OrgNumNodes_001.__name__,
+    def test_get_or_create_ClusterNumNodes_001(self):
+        orgAccountObj,owner = init_test_environ(ClusterNumNodesTest.test_get_or_create_ClusterNumNodes_001.__name__,
                                                 org_owner=None,
                                                 max_allowance=20000, 
                                                 monthly_allowance=1000,
@@ -37,10 +37,10 @@ class OrgNumNodesTest(GlobalTestCase):
         test_user = random_test_user()
         test_now = datetime.now(tz=timezone.utc)
         test_expire_date = test_now+timedelta(minutes=16)
-        orgNumNode,redundant,msg = get_or_create_OrgNumNodes(org=orgAccountObj,user=test_user,desired_num_nodes=3,expire_date=test_expire_date)
+        orgNumNode,redundant,msg = get_or_create_ClusterNumNodes(org=orgAccountObj,user=test_user,desired_num_nodes=3,expire_date=test_expire_date)
         self.assertEqual(redundant,False)
         self.assertIsNotNone(orgNumNode)
-        #LOG.info(f"------- Done test_get_or_create_OrgNumNodes_001 -------")
+        #LOG.info(f"------- Done test_get_or_create_ClusterNumNodes_001 -------")
         
 class OrgAccountTest(GlobalTestCase):
 
