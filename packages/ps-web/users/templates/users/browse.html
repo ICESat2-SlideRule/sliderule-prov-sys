@@ -19,14 +19,12 @@
             <div class="col py-2">
                 <div class="container text-center">            
                     <div class="container">
-                        <div class="container">
-                            <div class="btn-group">
-                                {% if  not request.user.is_superuser  %}
-                                    {% if user_is_developer %}
-                                        <a class="tag btn btn-outline-primary"  href="{% url 'org-create'%}">Add New Organization Account</a>
-                                    {% endif %}
+                        <div class="btn-group">
+                            {% if  not request.user.is_superuser  %}
+                                {% if user_is_developer %}
+                                    <a class="tag btn btn-outline-primary"  href="{% url 'org-create'%}">Add New Organization Account</a>
                                 {% endif %}
-                            </div>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -44,16 +42,63 @@
                             <!---------  First display Ownerships -------->
                             <div class="container-lg text-center">            
                                 <div class="accordion" id="ownership_accordian"> 
-                                    <div class="container text-center">            
-                                        {% for cluster in clusters %}
-                                            {% if is_member_of_org|get_item:cluster.org.name %}
-                                                {% if user_is_owner|get_item:cluster.org.name %}
-                                                    {% with cluster=cluster membership=org_member|get_item:cluster.org.name user_is_owner=user_is_owner|get_item:cluster.org.name cluster_is_public=cluster.is_public this_active_ps_cmd=cluster.active_ps_cmd this_is_deployed=cluster.is_deployed this_deployed_state=cluster.deployed_state cur_nodes=cluster.cur_nodes cur_version=cluster.cur_version %}
-                                                        {% include 'users/member_card.html' %}
-                                                    {% endwith %}
-                                                {% endif %}
+                                    <div class="container text-center">
+                                        {% for org in org_accounts %}
+                                            {% if user_is_owner|get_item:org.name %}
+                                                <div class="accordian-item shadow">
+                                                    <h2 class="accordian-header" id="hd_{{org.name}}">
+                                                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_o" aria-expanded="true" aria-controls="collapse_{{org.name}}_o">
+                                                            {{org.name}}
+                                                        </button>
+                                                    </h2>
+                                                    <div id="collapse_{{org.name}}_o" class="accordion-collapse collapse" aria-labelledby="hd_{{org.name}}" data-bs-parent="#ownership_accordion">
+                                                        <div class="accordion-body">
+                                                            <div class="container-fluid">
+                                                                <div class="card text-center mb-2 border-0">
+                                                                    <div class="container text-center">            
+                                                                        <div class="container">
+                                                                            <div class="btn-group">
+                                                                                {% if  not request.user.is_superuser  %}
+                                                                                    {% if user_is_developer %}
+                                                                                        <a class="tag btn btn-outline-primary"  href="{% url 'cluster-create'%}">Add New Cluster</a>
+                                                                                    {% endif %}
+                                                                                {% endif %}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    {% for cluster in clusters_by_org_name|get_item:org.name %}
+                                                                        {% if is_member_of_org|get_item:org.name %}
+                                                                            {% if user_is_owner|get_item:org.name %}
+                                                                                <div class="accordian-item shadow">
+                                                                                    <h2 class="accordian-header" id="hd_{{cluster.name}}">
+                                                                                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{cluster.name}}_c" aria-expanded="true" aria-controls="collapse_{{cluster.name}}_c">
+                                                                                            {{cluster.name}}
+                                                                                        </button>
+                                                                                    </h2>
+                                                                                    <div id="collapse_{{cluster.name}}_c" class="accordion-collapse collapse" aria-labelledby="hd_{{cluster.name}}" data-bs-parent="#cluster_accordion">
+                                                                                        <div class="accordion-body">
+                                                                                            <div class="container-fluid">
+                                                                                                <div class="card text-center mb-2 border-0">
+                                                                                                    <dl>  
+                                                                                                        {% with cluster=cluster membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name %}
+                                                                                                            {% include 'users/member_card.html' %}
+                                                                                                        {% endwith %}
+                                                                                                    </dl>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+                                                                            {% endif %}
+                                                                        {% endif %}
+                                                                    {% endfor %}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             {% endif %}
-                                        {% endfor %}
+                                        {% endfor %}            
                                     </div>
                                 </div>
                             </div>
@@ -71,14 +116,52 @@
                             <!---------  Then display memberships --------> 
                             <div class="container-lg text-center">
                                 <div class="accordion" id="membership_accordian"> 
-                                    {% for cluster in clusters %}
-                                        {% if is_member_of_org|get_item:org.name %}
-                                            {% if not user_is_owner|get_item:org.name and not cluster.is_public %}
-                                                {% with membership=org_member|get_item:cluster.org.name user_is_owner=user_is_owner|get_item:cluster.org.name cluster_is_public=cluster.is_public this_active_ps_cmd=cluster.active_ps_cmd this_is_deployed=cluster.is_deployed this_deployed_state=cluster.deployed_state cur_nodes=cluster.cur_nodes cur_version=cluster.cur_version %}
-                                                    {% include 'users/member_card.html' %}
-                                                {% endwith %}
+                                    {% for org in org_accounts %}
+                                        {% for cluster in clusters_by_org_name|get_item:org.name %}
+                                            {% if is_member_of_org|get_item:org.name %}
+                                            <div class="accordian-item shadow">
+                                                <h2 class="accordian-header" id="hd_{{org.name}}">
+                                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_om" aria-expanded="true" aria-controls="collapse_{{org.name}}_om">
+                                                        {{org.name}}
+                                                    </button>
+                                                </h2>
+                                                <div id="collapse_{{org.name}}_om" class="accordion-collapse collapse" aria-labelledby="hd_{{org.name}}" data-bs-parent="#membership_accordion">
+                                                    <div class="accordion-body">
+                                                        <div class="container-fluid">
+                                                            <div class="card text-center mb-2 border-0">
+                                                                <div class="container text-center">            
+                                                                    <div class="container">
+                                                                        {% if not user_is_owner|get_item:org.name and not org_is_public|get_item:org.name %}
+                                                                            <div class="accordian-item shadow">
+                                                                                <h2 class="accordian-header" id="hd_{{cluster.name}}">
+                                                                                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{cluster.name}}_cm" aria-expanded="true" aria-controls="collapse_{{cluster.name}}_cm">
+                                                                                        {{cluster.name}}
+                                                                                    </button>
+                                                                                </h2>
+                                                                                <div id="collapse_{{cluster.name}}_cm" class="accordion-collapse collapse" aria-labelledby="hd_{{cluster.name}}" data-bs-parent="#cluster_accordion">
+                                                                                    <div class="accordion-body">
+                                                                                        <div class="container-fluid">
+                                                                                            <div class="card text-center mb-2 border-0">
+                                                                                                <dl>  
+                                                                                                    {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name cluster=cluster %}
+                                                                                                        {% include 'users/member_card.html' %}
+                                                                                                    {% endwith %}
+                                                                                                </dl>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                        {% endif %}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
                                             {% endif %}
-                                        {% endif %}
+                                        {% endfor %}
                                     {% endfor %}
                                 </div>
                             </div>
@@ -96,7 +179,7 @@
                             <!---------  Then display orgs where user is not a member --------> 
                             {% if any_unaffiliated %}
                             <div class="container-lg text-center">
-                                <div class="accordion" id="org_accordian">
+                                <div class="accordion" id="unaffiliated_accordian">
                                     <div class="container text-center">
                                         {% for org in org_accounts %}
                                             {% if not org.is_public %}
@@ -107,7 +190,7 @@
                                                                 {{org.name}}
                                                             </button>
                                                         </h2>
-                                                        <div id="collapse_{{org.name}}_u" class="accordion-collapse collapse" aria-labelledby="hd_{{org.name}}" data-bs-parent="#org_accordion">
+                                                        <div id="collapse_{{org.name}}_u" class="accordion-collapse collapse" aria-labelledby="hd_{{org.name}}" data-bs-parent="#unaffiliated_accordian">
                                                             <div class="accordion-body">
                                                                 <div class="container-fluid">
                                                                     <div class="card text-center mb-2 border-0">
@@ -155,21 +238,60 @@
                                     <div class="container text-center">
                                         {% if user_is_developer %}
                                             {% for org in org_accounts %}
-                                                {% if cluster_is_public|get_item:org.name %}
-                                                    {% if is_member_of_org|get_item:org.name %}
-                                                        {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name cluster_is_public=cluster_is_public|get_item:org.name this_active_ps_cmd=org_cluster_active_ps_cmd|get_item:org.name this_is_deployed=org_cluster_is_deployed|get_item:org.name  this_deployed_state=org_cluster_deployed_state|get_item:org.name cur_nodes=org_cluster_cur_nodes|get_item:org.name cur_version=org_cluster_cur_version|get_item:org.name this_connection_status=org_cluster_connection_status|get_item:org.name %}
-                                                            {% include 'users/member_card.html' %}
-                                                        {% endwith %}
-                                                    {% endif %}
-                                                {% endif %}
+                                            {% if org_has_public_cluster|get_item:org.name %}
+                                                <div class="accordian-item shadow">
+                                                    <h2 class="accordian-header" id="hd_{{org.name}}">
+                                                        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_om" aria-expanded="true" aria-controls="collapse_{{org.name}}_om">
+                                                            {{org.name}}
+                                                        </button>
+                                                    </h2>
+                                                    <div id="collapse_{{org.name}}_om" class="accordion-collapse collapse" aria-labelledby="hd_{{org.name}}" data-bs-parent="#membership_accordion">
+                                                        <div class="accordion-body">
+                                                            <div class="container-fluid">
+                                                                <div class="card text-center mb-2 border-0">
+                                                                    <div class="container text-center">            
+                                                                        {% for cluster in clusters_by_org_name|get_item:org.name %}
+                                                                            {% if cluster.is_public %}
+                                                                                {% if is_member_of_org|get_item:org.name %}
+                                                                                    <div class="accordian-item shadow">
+                                                                                        <h2 class="accordian-header" id="hd_{{cluster.name}}">
+                                                                                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{cluster.name}}_cm" aria-expanded="true" aria-controls="collapse_{{cluster.name}}_cm">
+                                                                                                {{cluster.name}}
+                                                                                            </button>
+                                                                                        </h2>
+                                                                                        <div id="collapse_{{cluster.name}}_cm" class="accordion-collapse collapse" aria-labelledby="hd_{{cluster.name}}" data-bs-parent="#cluster_accordion">
+                                                                                            <div class="accordion-body">
+                                                                                                <div class="container-fluid">
+                                                                                                    <div class="card text-center mb-2 border-0">
+                                                                                                    <dl>  
+                                                                                                        {% with membership=org_member|get_item:org.name user_is_owner=user_is_owner|get_item:org.name cluster_is_public=cluster_is_public|get_item:org.name this_active_ps_cmd=org_cluster_active_ps_cmd|get_item:org.name this_is_deployed=org_cluster_is_deployed|get_item:org.name  this_deployed_state=org_cluster_deployed_state|get_item:org.name cur_nodes=org_cluster_cur_nodes|get_item:org.name cur_version=org_cluster_cur_version|get_item:org.name this_connection_status=org_cluster_connection_status|get_item:org.name %}
+                                                                                                            {% include 'users/member_card.html' %}
+                                                                                                        {% endwith %}
+                                                                                                    </dl>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                {% endif %}
+                                                                            {% endif %}
+                                                                        {% endfor %}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            {% endif %}
                                             {% endfor %}
                                         {% else %}
                                             {% for org in org_accounts %}
-                                                {% if cluster_is_public|get_item:org.name %}
+                                            {% for cluster in clusters_by_org_name|get_item:org.name %}
+                                            {% if cluster.is_public %}
+                                                {% if cluster.name == 'compute' %}
                                                     <div class="accordian-item shadow">
                                                         <h2 class="accordian-header" id="hd_{{org.name}}">
                                                             <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapse_{{org.name}}_p" aria-expanded="true" aria-controls="collapse_{{org.name}}_p">
-                                                                {{org.name}}
+                                                                {{cluster.name}}
                                                             </button>
                                                         </h2>
                                                         <div id="collapse_{{org.name}}_p" class="accordion-collapse collapse" aria-labelledby="hd_{{org.name}}" data-bs-parent="#org_accordion">
@@ -188,6 +310,8 @@
                                                         </div>
                                                     </div>
                                                 {% endif %}
+                                            {% endif %}
+                                            {% endfor %}
                                             {% endfor %}
                                         {% endif %}
                                     </div>

@@ -142,4 +142,5 @@ staged
 .env_SAVED
 *.key
 oidc.*
+temp_redis_data
 

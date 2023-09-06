@@ -781,7 +781,8 @@ def browse(request):
             active_user = request.user
             user_is_owner = {}
             org_by_name = {}
-            org_is_public = {}
+            clusters_by_org_name = {}
+            org_has_public_cluster = {}
             
             org_show_shutdown_date = {}
             unaffiliated = 0
@@ -789,7 +790,7 @@ def browse(request):
             any_memberships = False
             any_ownerships = False
             user_is_developer = request.user.groups.filter(name='PS_Developer').exists()
-            clusters = NodeGroup.objects.all()
+            
             org_accounts = OrgAccount.objects.all()
             for orgAccountObj in org_accounts:
                 try:
@@ -807,7 +808,11 @@ def browse(request):
                             any_ownerships = True
                         user_is_owner.update({o.name: (o.owner == request.user)})
                         org_by_name.update({o.name: o})
-                        org_is_public.update({o.name: o.is_public})
+                        clusters_in_org = NodeGroup.objects.filter(org__name=o.name)
+                        clusters_by_org_name.update({o.name: clusters_in_org})
+                        for clusterObj in clusters_in_org:
+                            if clusterObj.is_public:
+                                org_has_public_cluster.update({o.name: True})
                         for m in members:
                             if o is not None and m.org is not None:
                                 if o.name == m.org.name:
@@ -835,7 +840,8 @@ def browse(request):
                     'any_unaffiliated': (unaffiliated>0),
                     'any_ownerships': any_ownerships,
                     'any_memberships': any_memberships,
-                    'org_is_public': org_is_public,
+                    'clusters_by_org_name': clusters_by_org_name,
+                    'org_has_public_cluster': org_has_public_cluster,
                     'PROVISIONING_DISABLED': get_PROVISIONING_DISABLED(redis_interface),
                     }
 
@@ -843,10 +849,10 @@ def browse(request):
         @register.filter
         def get_item(dictionary, key):
             return dictionary.get(key)
-        if(clusters.count() == 0):
-            LOG.info("No clusters exist!")
+        if(OrgAccount.objects.all().count() == 0):
+            LOG.info("No Organizations exist!")
             messages.info(
-                request, 'No orgs/clusters exist yet; Have admin user create them')
+                request, 'No organizations exist yet; Have admin user create them')
 
     except Exception as e:
         LOG.exception("caught exception:")

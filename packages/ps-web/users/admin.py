@@ -1,12 +1,14 @@
 from django.contrib import admin
+from django.contrib.contenttypes.admin import GenericTabularInline
 from django.contrib.auth.decorators import login_required
 from django.db import models
 from django import forms
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 # Register your models here.
-from .models import User, OrgAccount, Membership, NodeGroup, Cost, ClusterNumNode, PsCmdResult, OwnerPSCmd
+from .models import User, OrgAccount, Membership, NodeGroup, Cost, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget, ASGNodeLimits
 from .models import GranChoice,PsCmdResult
 from django.contrib.auth import get_user_model
 
@@ -14,15 +16,13 @@ from django.contrib.auth import get_user_model
 # i.e. ACCOUNT_LOGIN_ATTEMPTS_LIMIT and ACCOUNT_LOGIN_ATTEMPTS_TIMEOUT 
 admin.site.login = login_required(admin.site.login)
 
+@admin.register(get_user_model())
 class UserAdmin(admin.ModelAdmin):
     list_display = ['is_active', 'username', 'is_superuser',
                     'is_staff', 'first_name', 'last_name', 'email', 'date_joined']
     list_display_links = ['username']
     list_filter = ('is_active', 'is_superuser', 'is_staff', 'date_joined')
     search_fields = ['username', 'last_name', 'first_name', 'email']
-
-admin.site.register(get_user_model(), UserAdmin)
-
 
 @admin.register(Membership)
 class MembershipAdmin(admin.ModelAdmin):
@@ -31,23 +31,50 @@ class MembershipAdmin(admin.ModelAdmin):
     list_filter = ('user', 'org', 'active', 'creation_date', 'modified_date')
     search_fields = ('user__username','user__first_name','user__last_name')
     def user_full_name(self, obj):
-        return obj.user.get_full_name()
+        return obj.user.get_full_name() if obj.user else 'Unknown'
     user_full_name.short_description = 'User Full Name'
 
     def user_username(self, obj):
         return obj.user.username
     user_username.short_description = 'Username'
 
+@admin.register(ASGNodeLimits)
+class ASGNodeLimitsAdmin(admin.ModelAdmin):
+    list_display = ('object_id', 'num', 'min', 'max')
+    search_fields = ['object_id']
+    list_filter = ('min', 'max')
+    readonly_fields = ('object_id',)
+
+@admin.register(Budget)
+class BudgetAdmin(admin.ModelAdmin):
+    list_display = ('id', 'max_allowance', 'monthly_allowance', 'balance', 'creation_date', 'modified_date')
+    search_fields = ['id']
+    list_filter = ('creation_date', 'modified_date')
+    readonly_fields = ('id', 'creation_date', 'modified_date')
+
+
+class BudgetInline(GenericTabularInline):
+    model = Budget
+    ct_field = 'content_type'
+    ct_fk_field = 'object_id'
+    extra = 1  # This determines how many empty forms will be displayed for adding new related objects.
+
 @admin.register(OrgAccount)
 class OrgAccountAdmin(admin.ModelAdmin):
-    list_display = ('name', 'owner', 'budget', 'creation_date', 'modified_date')
-    list_display_links = ['name','owner','budget']
-    list_filter = ('name', 'owner', 'budget', 'creation_date', 'modified_date')
+    list_display = ('name', 'owner', 'display_budget', 'point_of_contact_name', 'email', 'mfa_code', 'creation_date', 'modified_date')
+    list_display_links = ['name','owner']
+    list_filter = ('name', 'owner', 'creation_date', 'modified_date')
+    inlines = [BudgetInline]
     #readonly_fields = ('id')
-
+    def display_budget(self, obj):
+        # This function returns the related budget for an OrgAccount instance
+        # You can customize this to show whatever details you need
+        budget = obj.budget.all().first()  # considering there's only one budget per OrgAccount due to unique=True
+        return str(budget) if budget else '-'
+    display_budget.short_description = 'Budget'
 
 @admin.register(NodeGroup)
-class ClusterAdmin(admin.ModelAdmin):
+class NodeGroupAdmin(admin.ModelAdmin):
     list_display = ('name', 'org', 'cur_asg', 'node_mgr_fixed_cost', 'node_fixed_cost', 'creation_date', 'modified_date','cur_version',
                     'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state',
                     'allow_deploy_by_token',)
@@ -76,6 +103,7 @@ class ClusterNumNodeAdmin(admin.ModelAdmin):
 class GranChoiceAdmin(admin.ModelAdmin):
     list_display = ('granularity',)
 
+@admin.register(PsCmdResult)
 class PsCmdResultAdmin(admin.ModelAdmin):
     list_display = ('cluster', 'creation_date', 'expiration', 'ps_cmd_summary_label_formatted', 'ps_cmd_output_formatted', 'error_formatted')
     list_filter = ('cluster','creation_date','expiration')
@@ -94,9 +122,6 @@ class PsCmdResultAdmin(admin.ModelAdmin):
     def error_formatted(self, obj):
         return format_html('<div style="max-height: 100px; overflow: auto;">{}</div>', obj.error)
     error_formatted.short_description = 'Errors'
-
-
-admin.site.register(PsCmdResult, PsCmdResultAdmin)
 
 @admin.register(OwnerPSCmd)
 class OwnerPSCmdAdmin(admin.ModelAdmin):
