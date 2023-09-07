@@ -1,6 +1,8 @@
 from django import forms
 from django.forms import ModelForm
 from django.contrib.auth.forms import UserCreationForm, UsernameField, UserChangeForm
+from django.forms import BaseInlineFormSet
+from django.contrib.contenttypes.forms import generic_inlineformset_factory
 from .models import Membership, OrgAccount, NodeGroup, User, ClusterNumNode, ASGNodeLimits, Budget
 from captcha.fields import CaptchaField
 from datetime import datetime,timedelta
@@ -151,7 +153,9 @@ class OrgProfileForm(ModelForm):
 class OrgAccountForm(ModelForm):
     class Meta:
         model = OrgAccount
-        fields = ['owner', 'name', 'point_of_contact_name', 'email']
+        fields = '__all__'
+
+BudgetFormSet = generic_inlineformset_factory(Budget, extra=0, fields=['balance','max_allowance','monthly_allowance'])
 
 class CustomLoginForm(LoginForm):
     def __init__(self, *args, **kwargs):

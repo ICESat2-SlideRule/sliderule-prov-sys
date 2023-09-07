@@ -25,7 +25,7 @@ from api.tokens import OrgRefreshToken
 from api.serializers import MembershipSerializer
 from rest_framework_simplejwt.settings import api_settings
 from django_celery_results.models import TaskResult
-from .tasks import get_ps_versions, get_cluster_queue_name_str, get_cluster_queue_name, forever_loop_main_task, getGranChoice, set_PROVISIONING_DISABLED, get_PROVISIONING_DISABLED, RedisInterface, init_new_org_memberships
+from .tasks import get_ps_versions, get_cluster_queue_name_str, get_cluster_queue_name, forever_loop_main_task, getGranChoice, set_PROVISIONING_DISABLED, get_PROVISIONING_DISABLED, init_new_org_memberships
 from oauth2_provider.models import Application
 from users.global_constants import *
 
@@ -188,10 +188,9 @@ def init_celery():
     hostname = socket.gethostname()
     LOG.info(f"hostname:{hostname}")
     domain = os.environ.get("DOMAIN")
-    redis_interface = RedisInterface()
 
-    set_PROVISIONING_DISABLED(redis_interface,'False')
-    LOG.info(f"get_PROVISIONING_DISABLED:{get_PROVISIONING_DISABLED(redis_interface)}")
+    set_PROVISIONING_DISABLED('False')
+    LOG.info(f"get_PROVISIONING_DISABLED:{get_PROVISIONING_DISABLED()}")
 
     if 'localhost' in domain: 
         SHELL_CMD=f"celery -A ps_web flower --url_prefix=flower".split(" ")

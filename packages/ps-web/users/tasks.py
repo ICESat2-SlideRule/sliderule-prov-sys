@@ -55,22 +55,22 @@ class RedisInterface:
         return True
 
 redis_interface = RedisInterface()
+redis_connection = redis_interface.get_connection()
 
-def set_PROVISIONING_DISABLED(redis_interface,val):
+def set_PROVISIONING_DISABLED(val):
+    LOG.critical(f"set_PROVISIONING_DISABLED({val})")
     try:
-        redis_connection = redis_interface.get_connection()
         redis_connection.set('PROVISIONING_DISABLED', val)
     except Exception as e:
-        LOG.critical(f"set_PROVISIONING_DISABLED({redis_interface},{val}) failed with {e} ")
+        LOG.critical(f"set_PROVISIONING_DISABLED({val}) failed with {e} ")
 
-def get_PROVISIONING_DISABLED(redis_interface):
+def get_PROVISIONING_DISABLED():
     try:
-        redis_connection = redis_interface.get_connection()
         state = redis_connection.get('PROVISIONING_DISABLED').decode('utf-8')  == 'True'
         if state is None:
             # initialize to False
             LOG.critical("PROVISIONING_DISABLED is None; Setting to False")
-            set_PROVISIONING_DISABLED(redis_interface,'False')
+            set_PROVISIONING_DISABLED('False')
             state = False
         if state != False:
             LOG.critical(f"PROVISIONING_DISABLED is {state}")
@@ -1644,11 +1644,9 @@ def forever_loop_main_task(self,name,loop_count):
     clusterObj = OrgAccount.objects.get(name=name)
     result = True
     task_idle = True
-    redis_interface = None
     try:
         LOG.info(f"forever_loop_main_task {self.request.id} STARTED for {clusterObj.org.name}")
-        redis_interface = RedisInterface()
-        while task_idle and redis_interface.server_is_up() and not get_PROVISIONING_DISABLED(redis_interface):
+        while task_idle and redis_interface.server_is_up() and not get_PROVISIONING_DISABLED():
             task_idle, loop_count = loop_iter(clusterObj,loop_count)
     except Exception as e:
         LOG.exception(f'forever_loop_main_task - Exception caught while processing:{clusterObj.org.name}')
@@ -1656,7 +1654,7 @@ def forever_loop_main_task(self,name,loop_count):
         result = False
     #run again if  we have a redis connection and not disabled
     if redis_interface is not None and redis_interface.server_is_up():
-        if get_PROVISIONING_DISABLED(redis_interface) == False: 
+        if get_PROVISIONING_DISABLED() == False: 
             sleep(1)
             LOG.info(f" forever_loop_main_task {self.request.id} RE-STARTED for {clusterObj.org.name} after Exception or PS_CMD because get_PROVISIONING_DISABLED is False!")
             forever_loop_main_task.apply_async((clusterObj.name,clusterObj.loop_count),queue=get_cluster_queue_name(clusterObj))

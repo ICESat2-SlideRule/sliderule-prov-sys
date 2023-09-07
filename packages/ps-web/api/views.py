@@ -20,7 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import TokenBackendError
-from users.tasks import process_num_nodes_api,update_cur_num_nodes,remove_num_node_requests,set_PROVISIONING_DISABLED,redis_interface
+from users.tasks import process_num_nodes_api,update_cur_num_nodes,remove_num_node_requests,set_PROVISIONING_DISABLED
 from users.global_constants import *
 from oauth2_provider.views.generic import ProtectedResourceView
 from django.http import JsonResponse
@@ -440,7 +440,7 @@ class DisableProvisioningView(generics.UpdateAPIView):
                 login(request, user)
                 try:
                     if mfa_code == os.environ.get('MFA_CODE'):
-                        set_PROVISIONING_DISABLED(redis_interface,'True')
+                        set_PROVISIONING_DISABLED('True')
                     else:
                         return Response({'status': "FAILED","error_msg":"Invalid MFA code"}, status=status.HTTP_400_BAD_REQUEST)
                 except Exception as e:

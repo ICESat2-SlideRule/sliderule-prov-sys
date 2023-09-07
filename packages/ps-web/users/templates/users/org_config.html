@@ -3,14 +3,6 @@
 
 {% load i18n %}
 
-{% block nav %}
-    <div class="container text-center">
-        {% with org_profile_page="active" %}  
-        {% include 'users/org_button_bar.html' %} 
-        {% endwith %}
-    </div>
-{% endblock %}
-
 {% block content %}
 
 <div class="auth text-center">
@@ -19,13 +11,17 @@
             <div class="container text-center">            
                 <div class="card shadow">
                     <div class="card-header text-center">
-                        <h4>{% {{org.name}} Configuration %}</h4>                  
+                        <h4>{{org.name}} Configuration</h4>                  
                     </div>
                     <div class="card-body">
                         <div class="auto-scroll-x-y">
                             <form class="form" action="" method="post">
                                 {% csrf_token %}
                                 {{ form|crispy }}
+
+                                <h3>Budget</h3>
+                                {{ formset|crispy }}
+                            
                                 <button type="submit" class="btn btn-outline-primary my-1">Submit</button>
                             </form>
                         </div>
@@ -36,3 +32,5 @@
     </div>               
 </div>
 {% endblock content %}
+{% block javascript %}
+{% endblock javascript %}
