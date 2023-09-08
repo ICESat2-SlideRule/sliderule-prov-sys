@@ -10,25 +10,70 @@
         <div class="col py-2 text-center"> <!-- Removed the inner .container and added text-center here -->
             <div class="card shadow mx-auto d-block" style="max-width: fit-content;"> <!-- Added styles and classes to center and fit to content -->
                 <div class="card-header text-center">
-                    <h4>{{org.name}} Configuration</h4>
+                    <h4>{{orgAccountObj.name}} Configuration</h4>
                 </div>
                 <div class="card-body">
                     <div class="auto-scroll-x-y">
                         <form class="form" action="" method="post">
                             {% csrf_token %}
                             <div class="mb-4">
-                                {{ form|crispy }}
+                                {{ orgAccountForm|crispy }}
                             </div>
                             <div class="card">
                                 <div class="card-header text-center">
-                                    <h5>Budget</h5>
+                                    <h5>Organization Budget</h5>
                                 </div>
                                 <div class="card-body">
-                                    {{ formset|crispy }}
-                                    <button type="submit" class="btn btn-outline-primary my-1">Submit</button>
+                                    {{ org_formset|crispy }}
+                                </div>                                
+                            </div>
+                            <div class="card mt-4">
+                                <div class="card-header text-center">
+                                    <h5>Node Group Budgets</h5>
                                 </div>
+                                <div class="card-body">
+                                    {% for ng_formset in ng_formsets %}
+                                    <div class="mb-4" data-formindex="{{ forloop.counter0 }}">
+                                        <h6>{{ ng_formset.instance.name }} Node Group</h6>
+                                        {{ ng_formset|crispy }}
+                                    </div>
+                                    {% endfor %}
+                                    <div class="btn-group">
+                                        <!-- Button to Open the Modal -->
+                                        <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#nodeGroupModal">Add Node Group</button>
+                                    </div>            
+                                </div>
+                            </div>                            
+                            <div class="btn-group">
+                                <button type="submit" class="btn btn-outline-primary my-1">Submit</button>
                             </div>
                         </form>
+                        <!-- The Modal -->
+                        <div class="modal fade" id="nodeGroupModal" tabindex="-1" aria-labelledby="nodeGroupModalLabel" aria-hidden="true">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <!-- Modal Header -->
+                                    <div class="modal-header">
+                                        <h4 class="modal-title">Add Node Group for {{orgAccountObj}}</h4>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+
+                                    <!-- Modal body -->
+                                    <div class="modal-body">
+                                        <form method="post">
+                                            {% csrf_token %}
+                                            {{ nodeGroupCreateForm|crispy }}
+                                        </form>
+                                    </div>
+
+                                    <!-- Modal footer -->
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-success" onclick="addNodeGroup(this)" data-formindex="{{ forloop.counter0 }}">Add</button>
+                                        <button type="button" class="btn btn-danger" data-bs-dismiss="modal" aria-label="Close">Close</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -38,4 +83,59 @@
 
 {% endblock content %}
 {% block javascript %}
+<script>
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                // Does this cookie string begin with the name we want?
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    function addNodeGroup(buttonElement) {
+        var testit = 'yes'
+        var formIndex = buttonElement.getAttribute('data-formindex');
+        const csrftoken = getCookie('csrftoken');
+
+        var name = document.getElementById("id_form-" + formIndex + "-name").value;
+        var node_mgr_fixed_cost = document.getElementById("id_form-" + formIndex +"-node_mgr_fixed_cost").value;
+        var node_fixed_cost = document.getElementById("id_form-" + formIndex +"-node_fixed_cost").value;
+        var nodeGroupCreateUrl = "{% url 'node-group-create' orgAccountObj.id %}";
+        
+        // Post the data the Django view
+        $.ajax({
+            type: "POST",
+            url: nodeGroupCreateUrl,  
+            data: {
+                'name': name,
+                'node_mgr_fixed_cost': node_mgr_fixed_cost,
+                'node_fixed_cost': node_fixed_cost,
+            },
+            beforeSend: function(xhr, settings) {
+                xhr.setRequestHeader("X-CSRFToken", csrftoken);
+            },
+            success: function(response) {
+                if (response.success) {
+                    alert('Node Group added successfully!');
+                    location.reload();  // Refresh the page or update the DOM as needed
+                } else {
+                    alert('Error: ' + response.error);
+                }
+            },
+            error: function(xhr, status, error) {
+                alert('An error occurred: ' + error.message);
+            }
+        });
+    }
+
+</script>
 {% endblock javascript %}

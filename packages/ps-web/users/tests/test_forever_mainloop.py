@@ -15,8 +15,8 @@ from decimal import *
 from django.urls import reverse
 from users.tests.utilities_for_unit_tests import get_test_org,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,random_test_user,process_onn_api,process_onn_expires,process_owner_ps_cmd,process_owner_ps_Destroy_cmd,process_owner_ps_Refresh_cmd,process_owner_ps_Update_cmd
 from users.models import Membership,OwnerPSCmd,OrgAccount,ClusterNumNode,NodeGroup
-from users.forms import ClusterCfgForm
-from users.tasks import loop_iter,init_new_org_memberships,init_new_org_memberships,process_prov_sys_tbls,get_cluster_queue_name,get_or_create_ClusterNumNodes
+from users.forms import NodeGroupCfgForm
+from users.tasks import loop_iter,init_new_org_memberships,init_new_org_memberships,process_prov_sys_tbls,get_node_group_queue_name,get_or_create_ClusterNumNodes
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from allauth.account.decorators import verified_email_required
@@ -100,8 +100,8 @@ def simple_test_onn_api(client,
     else:
         logger.info(f"json_data:{json_data}")
 
-    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
-    clusterObj.refresh_from_db()    # The client.post above updated the DB so we need this
+    nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+    nodeGroupObj.refresh_from_db()    # The client.post above updated the DB so we need this
     orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
     logger.info(f"{response.status_code} == {expected_status} ?")
     assert(response.status_code == expected_status) 
@@ -125,7 +125,7 @@ def test_apis_simple_case(caplog,client,verified_TEST_USER,mock_email_backend,in
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3,15],
                                     access_token=access_token,
                                     expected_status=200)
     assert('created and queued capacity request' in json_data['msg'])
@@ -161,7 +161,7 @@ def test_negative_test_apis(caplog,client,verified_TEST_USER,mock_email_backend,
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3,15],
                                     access_token=access_token+'BAD',
                                     expected_status=403)
     assert(json_data['messages'][0]['message'] == 'Token is invalid or expired') 
@@ -170,7 +170,7 @@ def test_negative_test_apis(caplog,client,verified_TEST_USER,mock_email_backend,
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,300,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,300,15],
                                     access_token=access_token,
                                     expected_status=200)
 
@@ -178,7 +178,7 @@ def test_negative_test_apis(caplog,client,verified_TEST_USER,mock_email_backend,
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='put-num-nodes',
-                                    url_args=[orgAccountObj.name,clusterObj.name,300],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,300],
                                     access_token=access_token,
                                     expected_status=200)
 
@@ -186,28 +186,28 @@ def test_negative_test_apis(caplog,client,verified_TEST_USER,mock_email_backend,
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='put-num-nodes',
-                                    url_args=[orgAccountObj.name,clusterObj.name,0],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,0],
                                     access_token=access_token,
                                     expected_status=200)
 
     # test num_nodes less than min gets clamped
-    clusterObj.cfg_asg.min = 2
-    clusterObj.save()
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.save()
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='put-num-nodes',
-                                    url_args=[orgAccountObj.name,clusterObj.name,1],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,1],
                                     access_token=access_token,
                                     expected_status=200)
     assert (f"Deploying test_org cluster Created new " in json_data['msg'])
     assert((f'Deploying {orgAccountObj.name} cluster' in json_data['msg']) or (f'Updating {orgAccountObj.name} cluster' in json_data['msg']))
 
     # test num_nodes greater than max gets clamped
-    clusterObj.save()
+    nodeGroupObj.save()
     json_data = simple_test_onn_api(client,
                                     orgAccountObj=orgAccountObj,
                                     view_name='put-num-nodes',
-                                    url_args=[orgAccountObj.name,clusterObj.name,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,15],
                                     access_token=access_token,
                                     expected_status=200)
     assert (f"Deploying test_org cluster Created new " in json_data['msg'])
@@ -237,7 +237,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3,15],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=0,
@@ -249,7 +249,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3,15],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -262,7 +262,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='put-num-nodes',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -274,7 +274,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3,16],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3,16],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -286,7 +286,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,2,17],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,2,17],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -298,7 +298,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,1,19],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,1,19],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -310,7 +310,7 @@ def test_api_urls(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj,
                                     current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,4,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,4,15],
                                     access_token=access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -335,15 +335,15 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
         orgAccountObj = get_test_org()
         owner_access_token = login_owner_user(orgAccountObj=orgAccountObj,client=client)
 
-        clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+        nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
         
         assert(OwnerPSCmd.objects.count()==0)
         assert(ClusterNumNode.objects.count()==0)
         assert(orgAccountObj.loop_count==0)
-        assert(clusterObj.num_owner_ps_cmd==0)
-        assert(clusterObj.num_ps_cmd==0)
-        assert(clusterObj.num_ps_cmd_successful==0)
-        assert(clusterObj.num_onn==0)
+        assert(nodeGroupObj.num_owner_ps_cmd==0)
+        assert(nodeGroupObj.num_ps_cmd==0)
+        assert(nodeGroupObj.num_ps_cmd_successful==0)
+        assert(nodeGroupObj.num_onn==0)
         loop_count=0
         current_fake_tm = datetime.now(timezone.utc)  
 
@@ -351,7 +351,7 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj=orgAccountObj,
                                     new_time=current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,3,15],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,3,15],
                                     access_token=owner_access_token,
                                     loop_count=loop_count,
                                     data=None,
@@ -366,7 +366,7 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj=orgAccountObj,
                                     new_time=current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,4,16],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,4,16],
                                     access_token=owner_access_token,
                                     loop_count=loop_count,
                                     data=None,
@@ -378,7 +378,7 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                     orgAccountObj=orgAccountObj,
                                     new_time=current_fake_tm,
                                     view_name='post-num-nodes-ttl',
-                                    url_args=[orgAccountObj.name,clusterObj.name,2,17],
+                                    url_args=[orgAccountObj.name,nodeGroupObj.name,2,17],
                                     access_token=owner_access_token,
                                     data=None,
                                     loop_count=loop_count,
@@ -393,46 +393,46 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
         # (i.e. 20 calls to loop_iter)
         # This is to reduce the db i/o rate
         #
-        clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
 
-        task_idle, loop_count = loop_iter(clusterObj,loop_count)
-        clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+        task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+        nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         assert(loop_count==1)
-        assert(clusterObj.num_onn==1)
+        assert(nodeGroupObj.num_onn==1)
         assert(OwnerPSCmd.objects.count()==0)
         assert(ClusterNumNode.objects.count()==3)
-        assert(clusterObj.num_owner_ps_cmd==0)
-        assert(clusterObj.num_onn==1)
+        assert(nodeGroupObj.num_owner_ps_cmd==0)
+        assert(nodeGroupObj.num_onn==1)
 
         # this gets updated ever ten seconds (i.e. 50 calls to loop_iter)
         assert(orgAccountObj.loop_count==0)
 
         # verify setup occurred
-        assert(clusterObj.provision_env_ready)
-        assert(clusterObj.provisioning_suspended==False)
+        assert(nodeGroupObj.provision_env_ready)
+        assert(nodeGroupObj.provisioning_suspended==False)
 
         # this on gets updated every time a ps cmd is processed
         # regardless of where it originated from (i.e. cnn or owner_ps_cmd)
-        assert(clusterObj.num_ps_cmd==1) # update cmd
-        assert(clusterObj.cfg_asg.num==4)
-        assert(clusterObj.num_ps_cmd_successful==1)
-        task_idle, loop_count = loop_iter(clusterObj,loop_count)
+        assert(nodeGroupObj.num_ps_cmd==1) # update cmd
+        assert(nodeGroupObj.cfg_asg.num==4)
+        assert(nodeGroupObj.num_ps_cmd_successful==1)
+        task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
         assert(loop_count==2)
         
-        #clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+        #nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
         #orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         assert(orgAccountObj.loop_count==0)# udpates are throttled every 20
-        assert(clusterObj.num_onn==1)
+        assert(nodeGroupObj.num_onn==1)
         # nothing else changes
         assert(OwnerPSCmd.objects.count()==0)
         assert(ClusterNumNode.objects.count()==3)
-        assert(clusterObj.num_owner_ps_cmd==0)
-        assert(clusterObj.num_onn==1)
-        assert(clusterObj.num_ps_cmd==1)
-        assert(clusterObj.num_ps_cmd_successful==1)
-        assert(clusterObj.cfg_asg.num==4)
+        assert(nodeGroupObj.num_owner_ps_cmd==0)
+        assert(nodeGroupObj.num_onn==1)
+        assert(nodeGroupObj.num_ps_cmd==1)
+        assert(nodeGroupObj.num_ps_cmd_successful==1)
+        assert(nodeGroupObj.cfg_asg.num==4)
         # web login
         assert(client.login(username=OWNER_USER,password=OWNER_PASSWORD))
 
@@ -443,33 +443,33 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                                     num_iters=0)
 
         # verify setup occurred
-        assert(clusterObj.provision_env_ready)
-        assert(clusterObj.provisioning_suspended==False)
+        assert(nodeGroupObj.provision_env_ready)
+        assert(nodeGroupObj.provisioning_suspended==False)
 
         assert(OwnerPSCmd.objects.count()==1) 
         assert(ClusterNumNode.objects.count()==3)
-        assert(clusterObj.num_owner_ps_cmd==0) #not until loop_iter
-        assert(clusterObj.num_onn==1)
-        assert(clusterObj.num_ps_cmd==1)
-        assert(clusterObj.num_ps_cmd_successful==1)
-        assert(clusterObj.cfg_asg.num==4)
+        assert(nodeGroupObj.num_owner_ps_cmd==0) #not until loop_iter
+        assert(nodeGroupObj.num_onn==1)
+        assert(nodeGroupObj.num_ps_cmd==1)
+        assert(nodeGroupObj.num_ps_cmd_successful==1)
+        assert(nodeGroupObj.cfg_asg.num==4)
         assert(loop_count==2)
          #not until loop_iter
-        assert(clusterObj.num_onn==1)
+        assert(nodeGroupObj.num_onn==1)
 
-        task_idle, loop_count = loop_iter(clusterObj,loop_count)
+        task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
         assert(loop_count==3)
-        clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         assert(OwnerPSCmd.objects.count()==0) # processed and cleared
         assert(ClusterNumNode.objects.count()==3)
-        assert(clusterObj.num_owner_ps_cmd==1)
-        assert(clusterObj.num_onn==1)
-        assert(clusterObj.num_ps_cmd==2) # processed
-        assert(clusterObj.num_ps_cmd_successful==2)
-        assert(clusterObj.cfg_asg.num==4)
+        assert(nodeGroupObj.num_owner_ps_cmd==1)
+        assert(nodeGroupObj.num_onn==1)
+        assert(nodeGroupObj.num_ps_cmd==2) # processed
+        assert(nodeGroupObj.num_ps_cmd_successful==2)
+        assert(nodeGroupObj.cfg_asg.num==4)
        
-        assert(clusterObj.num_onn==1)
+        assert(nodeGroupObj.num_onn==1)
 
         # expire first one (3,15)
         # table is:
@@ -486,8 +486,8 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                         expected_desired_num_nodes=4)
 
         # simulate the deploy
-        clusterObj.is_deployed = True
-        clusterObj.save()
+        nodeGroupObj.is_deployed = True
+        nodeGroupObj.save()
 
         # expire next one (4,16)
         # table is:
@@ -504,9 +504,9 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
                                         expected_desired_num_nodes=2)
 
         # these two set like this mean we call destroy when table is empty
-        assert(clusterObj.destroy_when_no_nodes)
-        assert(clusterObj.cfg_asg.min==0)
-        assert clusterObj.is_deployed
+        assert(nodeGroupObj.destroy_when_no_nodes)
+        assert(nodeGroupObj.cfg_asg.min==0)
+        assert nodeGroupObj.is_deployed
         assert ClusterNumNode.objects.count()==1
         # expire next one (4,16)
         # table is:
@@ -539,15 +539,15 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
 #         orgAccountObj = get_test_org()
 #         owner_access_token = login_owner_user(orgAccountObj=orgAccountObj,client=client)
 
-#         clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+#         nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
         
 #         assert(OwnerPSCmd.objects.count()==0)
 #         assert(ClusterNumNode.objects.count()==0)
 #         assert(orgAccountObj.loop_count==0)
-#         assert(clusterObj.num_owner_ps_cmd==0)
-#         assert(clusterObj.num_ps_cmd==0)
-#         assert(clusterObj.num_ps_cmd_successful==0)
-#         assert(clusterObj.num_onn==0)
+#         assert(nodeGroupObj.num_owner_ps_cmd==0)
+#         assert(nodeGroupObj.num_ps_cmd==0)
+#         assert(nodeGroupObj.num_ps_cmd_successful==0)
+#         assert(nodeGroupObj.num_onn==0)
 #         loop_count=0
 #         current_fake_tm = datetime.now(timezone.utc)  
 
@@ -588,27 +588,27 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
 #                                     num_iters=0,
 #                                     expected_change_ps_cmd=0,
 #                                     expected_status='QUEUED')
-#         clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+#         nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
 #         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
 
-#         task_idle, loop_count = loop_iter(clusterObj,loop_count)
+#         task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
 #         assert(loop_count==1)
         
-#         assert(clusterObj.num_onn==1)
-#         clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+#         assert(nodeGroupObj.num_onn==1)
+#         nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
 #         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
 #         assert(OwnerPSCmd.objects.count()==0)
 #         assert(ClusterNumNode.objects.count()==3)
-#         assert(clusterObj.num_owner_ps_cmd==0)
-#         assert(clusterObj.num_onn==1)
+#         assert(nodeGroupObj.num_owner_ps_cmd==0)
+#         assert(nodeGroupObj.num_onn==1)
 
 #         # this gets updated ever ten seconds (i.e. 50 calls to loop_iter)
 #         assert(orgAccountObj.loop_count==0)
 
 #         # this on gets updated every time a ps cmd is processed
 #         # regardless of where it originated from (i.e. cnn or owner_ps_cmd)
-#         assert(clusterObj.num_ps_cmd==1)
-#         assert(clusterObj.num_ps_cmd_successful==1)
+#         assert(nodeGroupObj.num_ps_cmd==1)
+#         assert(nodeGroupObj.num_ps_cmd_successful==1)
 
 
 #         # web login
@@ -619,28 +619,28 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
 #                                                     new_time=datetime.now(timezone.utc),
 #                                                     loop_count=loop_count,
 #                                                     num_iters=0)
-#         clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+#         nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
 #         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
 #         assert(OwnerPSCmd.objects.count()==1) 
 #         assert(ClusterNumNode.objects.count()==3)
-#         assert(clusterObj.num_owner_ps_cmd==0) #not until loop_iter
-#         assert(clusterObj.num_onn==1)
-#         assert(clusterObj.num_ps_cmd==1)
-#         assert(clusterObj.num_ps_cmd_successful==1)
+#         assert(nodeGroupObj.num_owner_ps_cmd==0) #not until loop_iter
+#         assert(nodeGroupObj.num_onn==1)
+#         assert(nodeGroupObj.num_ps_cmd==1)
+#         assert(nodeGroupObj.num_ps_cmd_successful==1)
 
 
 
-#         task_idle, loop_count = loop_iter(clusterObj,loop_count)
+#         task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
 
 #         assert(OwnerPSCmd.objects.count()==0) 
 #         assert(ClusterNumNode.objects.count()==0)  # deploy should clear this
 #         logger.info(f"id:{orgAccountObj.id}")
 #         orgAccountObj.refresh_from_db() 
         
-#         assert(clusterObj.num_owner_ps_cmd==2)
-#         assert(clusterObj.num_onn==1)
-#         assert(clusterObj.num_ps_cmd==3)
-#         assert(clusterObj.num_ps_cmd_successful==3)
+#         assert(nodeGroupObj.num_owner_ps_cmd==2)
+#         assert(nodeGroupObj.num_onn==1)
+#         assert(nodeGroupObj.num_ps_cmd==3)
+#         assert(nodeGroupObj.num_ps_cmd_successful==3)
 
 # @pytest.mark.dev
 # @pytest.mark.django_db 
@@ -652,7 +652,7 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
 #     caplog.set_level(logging.DEBUG)
 #     orgAccountObj = get_test_org()
 
-#     clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+#     nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
 
 #     assert(client.login(username=OWNER_USER,password=OWNER_PASSWORD))
 #     loop_count = 0
@@ -663,20 +663,20 @@ def test_mainloop(caplog,client,verified_TEST_USER,mock_email_backend,initialize
 #                                                 num_iters=0)
 #     assert(OwnerPSCmd.objects.count()==1) 
 #     assert(ClusterNumNode.objects.count()==0)
-#     assert(clusterObj.num_owner_ps_cmd==0) #not until loop_iter
-#     assert(clusterObj.num_onn==0)
-#     assert(clusterObj.num_ps_cmd==0)
-#     assert(clusterObj.num_ps_cmd_successful==0)
+#     assert(nodeGroupObj.num_owner_ps_cmd==0) #not until loop_iter
+#     assert(nodeGroupObj.num_onn==0)
+#     assert(nodeGroupObj.num_ps_cmd==0)
+#     assert(nodeGroupObj.num_ps_cmd_successful==0)
 #     assert(loop_count==0)
 
-#     task_idle, loop_count = loop_iter(clusterObj,loop_count)
+#     task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
 #     assert(loop_count==1)
-#     clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+#     nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
 #     orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
 #     assert(OwnerPSCmd.objects.count()==0) # processed and cleared
 #     assert(ClusterNumNode.objects.count()==0) # 
-#     assert(clusterObj.num_owner_ps_cmd==1)
-#     assert(clusterObj.num_onn==0)
-#     assert(clusterObj.num_ps_cmd==1) # processed
-#     assert(clusterObj.num_ps_cmd_successful==1)
+#     assert(nodeGroupObj.num_owner_ps_cmd==1)
+#     assert(nodeGroupObj.num_onn==0)
+#     assert(nodeGroupObj.num_ps_cmd==1) # processed
+#     assert(nodeGroupObj.num_ps_cmd_successful==1)
     

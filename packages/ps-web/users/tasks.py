@@ -79,11 +79,11 @@ def get_PROVISIONING_DISABLED():
         state = False
     return state
 
-def get_cluster_queue_name_str(cluster_name):
+def get_node_group_queue_name_str(cluster_name):
     return f"ps-cmd-{cluster_name}"
 
-def get_cluster_queue_name(clusterObj):
-    return get_cluster_queue_name_str(clusterObj.__str__()) # has org name and cluster name to be unique
+def get_node_group_queue_name(nodeGroupObj):
+    return get_node_group_queue_name_str(nodeGroupObj.__str__()) # has org name and cluster name to be unique
 
 def flush_expired_refresh_tokens():
     SHELL_CMD=f"python manage.py flushexpiredtokens".split(" ")
@@ -104,10 +104,10 @@ def format_num_nodes_tbl(org):
     msg = msg + "]"
     return msg 
 
-def sort_CNN_by_nn_exp(clusterObj):
-    return ClusterNumNode.objects.filter(cluster=clusterObj).order_by('-desired_num_nodes','expiration')
+def sort_CNN_by_nn_exp(nodeGroupObj):
+    return ClusterNumNode.objects.filter(cluster=nodeGroupObj).order_by('-desired_num_nodes','expiration')
 
-def sum_of_highest_nodes_for_each_user(clusterObj):
+def sum_of_highest_nodes_for_each_user(nodeGroupObj):
     '''
         This routine is used to determine the number of nodes to use for the cluster.
         First, fetch the maximum desired_num_nodes for each user using annotate.
@@ -117,7 +117,7 @@ def sum_of_highest_nodes_for_each_user(clusterObj):
     '''
     # Get the highest desired_num_nodes for each user within the provided OrgAccount instance
     highest_nodes_per_user = (ClusterNumNode.objects
-                              .filter(cluster=clusterObj)
+                              .filter(cluster=nodeGroupObj)
                               .values('user')
                               .annotate(max_nodes=Max('desired_num_nodes')))
 
@@ -125,20 +125,20 @@ def sum_of_highest_nodes_for_each_user(clusterObj):
     ids_list = []
     for entry in highest_nodes_per_user:
         ids = (ClusterNumNode.objects
-               .filter(user_id=entry['user'], desired_num_nodes=entry['max_nodes'], cluster=clusterObj)
+               .filter(user_id=entry['user'], desired_num_nodes=entry['max_nodes'], cluster=nodeGroupObj)
                .values_list('id', flat=True))
         string_ids = [str(id) for id in ids]  # Convert each UUID to string
         ids_list.extend(string_ids)
     # Sum up the highest nodes for all users within the OrgAccount
     num_nodes_to_deploy = sum(entry['max_nodes'] for entry in highest_nodes_per_user)
-    if (int(num_nodes_to_deploy) < clusterObj.cfg_asg.min):
-        #LOG.info(f"Clamped num_nodes_to_deploy to min_node_cap:{clusterObj.cfg_asg.min} from {num_nodes_to_deploy}")
-        num_nodes_to_deploy = clusterObj.cfg_asg.min
-    if(int(num_nodes_to_deploy) > clusterObj.cfg_asg.max):
-        #LOG.info(f"Clamped num_nodes_to_deploy to max_node_cap:{clusterObj.cfg_asg.max} from {num_nodes_to_deploy}")
-        num_nodes_to_deploy = clusterObj.cfg_asg.max
-    clusterObj.cnnro_ids = ids_list
-    clusterObj.save(update_fields=['cnnro_ids'])
+    if (int(num_nodes_to_deploy) < nodeGroupObj.cfg_asg.min):
+        #LOG.info(f"Clamped num_nodes_to_deploy to min_node_cap:{nodeGroupObj.cfg_asg.min} from {num_nodes_to_deploy}")
+        num_nodes_to_deploy = nodeGroupObj.cfg_asg.min
+    if(int(num_nodes_to_deploy) > nodeGroupObj.cfg_asg.max):
+        #LOG.info(f"Clamped num_nodes_to_deploy to max_node_cap:{nodeGroupObj.cfg_asg.max} from {num_nodes_to_deploy}")
+        num_nodes_to_deploy = nodeGroupObj.cfg_asg.max
+    nodeGroupObj.cnnro_ids = ids_list
+    nodeGroupObj.save(update_fields=['cnnro_ids'])
     return num_nodes_to_deploy, ids_list
 
 def cull_expired_entries(org,tm):
@@ -154,63 +154,63 @@ def cull_expired_entries(org,tm):
     LOG.debug(f"ended with {ClusterNumNode.objects.filter(org=org).count()} ClusterNumNode for {org.name}")
 
 
-def need_destroy_for_changed_version_or_is_public(clusterObj,num_nodes_to_deploy):
-    # LOG.debug(f"cluster v:{clusterObj.cur_version} ip:{clusterObj.is_public} is_deployed:{clusterObj.is_deployed}")
-    # LOG.debug(f"    org v:{clusterObj.version} ip:{clusterObj.is_public}")
-    if clusterObj.is_deployed:
-        changed_version = (clusterObj.cur_version != clusterObj.version)
-        changed_is_public = (clusterObj.is_public != clusterObj.is_public)
+def need_destroy_for_changed_version_or_is_public(nodeGroupObj,num_nodes_to_deploy):
+    # LOG.debug(f"cluster v:{nodeGroupObj.cur_version} ip:{nodeGroupObj.is_public} is_deployed:{nodeGroupObj.is_deployed}")
+    # LOG.debug(f"    org v:{nodeGroupObj.version} ip:{nodeGroupObj.is_public}")
+    if nodeGroupObj.is_deployed:
+        changed_version = (nodeGroupObj.cur_version != nodeGroupObj.version)
+        changed_is_public = (nodeGroupObj.is_public != nodeGroupObj.is_public)
         #LOG.debug(f"changed_version:{changed_version} changed_is_public:{changed_is_public}")
         if changed_version or changed_is_public:
             #LOG.debug(f"changed_version:{changed_version} changed_is_public:{changed_is_public}")
-            if num_nodes_to_deploy != clusterObj.cfg_asg.num: # we (changed version or is_public) and we are processing a new set of top items (new deployment request)
-                LOG.info(f"num_nodes_to_deploy:{num_nodes_to_deploy} clusterObj.cfg_asg.num:{clusterObj.cfg_asg.num} need_destroy_for_changed_version_or_is_public: True")
+            if num_nodes_to_deploy != nodeGroupObj.cfg_asg.num: # we (changed version or is_public) and we are processing a new set of top items (new deployment request)
+                LOG.info(f"num_nodes_to_deploy:{num_nodes_to_deploy} nodeGroupObj.cfg_asg.num:{nodeGroupObj.cfg_asg.num} need_destroy_for_changed_version_or_is_public: True")
                 return True
     return False
 
-def clean_up_CNN_cnnro_ids(clusterObj,suspend_provisioning):
-    if clusterObj.cnnro_ids is not None:
+def clean_up_CNN_cnnro_ids(nodeGroupObj,suspend_provisioning):
+    if nodeGroupObj.cnnro_ids is not None:
 
         # Get the list of string UUIDs from the JSONField
-        string_uuids = clusterObj.cnnro_ids
+        string_uuids = nodeGroupObj.cnnro_ids
 
         # Convert each string UUID to a UUID object
         uuids_list = [UUID(id) for id in string_uuids]
 
         # Fetch the ClusterNumNode instances
         cnns = ClusterNumNode.objects.filter(id__in=uuids_list)
-        LOG.info(f"REMOVING ClusterNumNode clusterObj.cnnro_ids: {cnns}")
+        LOG.info(f"REMOVING ClusterNumNode nodeGroupObj.cnnro_ids: {cnns}")
         for cnn in cnns:
             cnn.delete()
-        cnt = ClusterNumNode.objects.filter(cluster=clusterObj).count()
-        clusterObj.cnnro_ids = None
-        clusterObj.save(update_fields=['cnnro_ids'])
+        cnt = ClusterNumNode.objects.filter(cluster=nodeGroupObj).count()
+        nodeGroupObj.cnnro_ids = None
+        nodeGroupObj.save(update_fields=['cnnro_ids'])
     if suspend_provisioning:
-        clusterObj.provisioning_suspended = True
-        clusterObj.save(update_fields=['provisioning_suspended'])
-        LOG.warning(f"provisioning_suspended for {clusterObj.name}")
+        nodeGroupObj.provisioning_suspended = True
+        nodeGroupObj.save(update_fields=['provisioning_suspended'])
+        LOG.warning(f"provisioning_suspended for {nodeGroupObj.name}")
 
-def check_provision_env_ready(clusterObj):
+def check_provision_env_ready(nodeGroupObj):
     setup_occurred = False
-    if not clusterObj.provision_env_ready:
+    if not nodeGroupObj.provision_env_ready:
         st = datetime.now(timezone.utc)
-        psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj, 'SetUp', version=clusterObj.version, username=clusterObj.org.owner, is_adhoc=False)
-        LOG.info(f"STARTED {org_cmd_str} is_public:{clusterObj.is_public}")
+        psCmdResultObj,org_cmd_str = get_psCmdResultObj(nodeGroupObj, 'SetUp', version=nodeGroupObj.version, username=nodeGroupObj.org.owner, is_adhoc=False)
+        LOG.info(f"STARTED {org_cmd_str} is_public:{nodeGroupObj.is_public}")
         try:
             with ps_client.create_client_channel("control") as channel:
                 stub = ps_server_pb2_grpc.ControlStub(channel)
                 timeout= int(os.environ.get("GRPC_TIMEOUT_SECS",900))
                 rsp_gen = stub.SetUp(
                     ps_server_pb2.SetUpReq(
-                        name=clusterObj.name,
-                        version=clusterObj.version,
-                        is_public=clusterObj.is_public,
+                        name=nodeGroupObj.name,
+                        version=nodeGroupObj.version,
+                        is_public=nodeGroupObj.is_public,
                         now=datetime.now(timezone.utc).strftime(FMT)),
                         timeout=timeout)
                 done = False
                 setup_occurred = True
-                clusterObj.active_ps_cmd = 'SetUp'
-                clusterObj.save(update_fields=['active_ps_cmd'])
+                nodeGroupObj.active_ps_cmd = 'SetUp'
+                nodeGroupObj.save(update_fields=['active_ps_cmd'])
                 while(not done): 
                     # make the call to get cached streamed response messages from server
                     #LOG.info(f"getting next response from ps-server...")
@@ -265,41 +265,41 @@ def check_provision_env_ready(clusterObj):
                             psCmdResultObj.error = ''
                             psCmdResultObj.save(update_fields=['error'])
                             if not rrsp.ps_server_error:
-                                clusterObj.provision_env_ready = True
+                                nodeGroupObj.provision_env_ready = True
                                 ps_server_pb2.GetCurrentSetUpCfgRsp()
-                                rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=clusterObj.org.name,cluster_name=clusterObj.name))
-                                clusterObj.prov_env_version = rsp.setup_cfg.version
-                                clusterObj.prov_env_is_public = rsp.setup_cfg.is_public
-                                if clusterObj.prov_env_version == '':
-                                    clusterObj.provision_env_ready = False
-                                    clusterObj.provisioning_suspended = True
-                                    clusterObj.save(update_fields=['provisioning_suspended'])
-                                    LOG.warning(f"{clusterObj.org.name} cluster current_version is null Suspending provisioning")
-                                LOG.info(f"{clusterObj.org.name} cluster current_version:{clusterObj.cur_version} provision_env_ready:{clusterObj.provision_env_ready}")
-                                clusterObj.num_ps_cmd_successful += 1
-                                clusterObj.num_setup_cmd_successful += 1
-                                clusterObj.save(update_fields=['num_ps_cmd_successful','num_setup_cmd_successful'])
-                                clusterObj.save()
+                                rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=nodeGroupObj.org.name,cluster_name=nodeGroupObj.name))
+                                nodeGroupObj.prov_env_version = rsp.setup_cfg.version
+                                nodeGroupObj.prov_env_is_public = rsp.setup_cfg.is_public
+                                if nodeGroupObj.prov_env_version == '':
+                                    nodeGroupObj.provision_env_ready = False
+                                    nodeGroupObj.provisioning_suspended = True
+                                    nodeGroupObj.save(update_fields=['provisioning_suspended'])
+                                    LOG.warning(f"{nodeGroupObj.org.name} cluster current_version is null Suspending provisioning")
+                                LOG.info(f"{nodeGroupObj.org.name} cluster current_version:{nodeGroupObj.cur_version} provision_env_ready:{nodeGroupObj.provision_env_ready}")
+                                nodeGroupObj.num_ps_cmd_successful += 1
+                                nodeGroupObj.num_setup_cmd_successful += 1
+                                nodeGroupObj.save(update_fields=['num_ps_cmd_successful','num_setup_cmd_successful'])
+                                nodeGroupObj.save()
                             LOG.info(f"{org_cmd_str} got rrsp done from ps_server!")
         except Exception as e:
-            error_msg = f"ERROR: {org_cmd_str}  {clusterObj.version}:"
+            error_msg = f"ERROR: {org_cmd_str}  {nodeGroupObj.version}:"
             LOG.exception(f"{error_msg} caught exception:") 
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- {org_cmd_str} {clusterObj.version} ---"
+            psCmdResultObj.ps_cmd_summary_label = f" --- {org_cmd_str} {nodeGroupObj.version} ---"
             psCmdResultObj.save()
 
         finally:
-            clusterObj.active_ps_cmd = ''
-            clusterObj.save(update_fields=['active_ps_cmd'])
+            nodeGroupObj.active_ps_cmd = ''
+            nodeGroupObj.save(update_fields=['active_ps_cmd'])
             time_to_process = datetime.now(timezone.utc) - st
             time_to_process = time_to_process - timedelta(microseconds=time_to_process.microseconds)
-            LOG.info(f"DONE {org_cmd_str} {clusterObj.version} has completed in {str(time_to_process)}")
-            if clusterObj.provisioning_suspended != clusterObj.provision_env_ready:
-                clusterObj.provisioning_suspended = not clusterObj.provision_env_ready
-                clusterObj.save(update_fields=['provisioning_suspended'])
-    return clusterObj.provision_env_ready,setup_occurred       
+            LOG.info(f"DONE {org_cmd_str} {nodeGroupObj.version} has completed in {str(time_to_process)}")
+            if nodeGroupObj.provisioning_suspended != nodeGroupObj.provision_env_ready:
+                nodeGroupObj.provisioning_suspended = not nodeGroupObj.provision_env_ready
+                nodeGroupObj.save(update_fields=['provisioning_suspended'])
+    return nodeGroupObj.provision_env_ready,setup_occurred       
 
-def process_num_node_table(clusterObj,prior_need_refresh):
+def process_num_node_table(nodeGroupObj,prior_need_refresh):
     '''
     This routine is called in the main loop (high frequency).
     If the the ClusterNumNode table changed and the highest num nodes desired 
@@ -316,106 +316,106 @@ def process_num_node_table(clusterObj,prior_need_refresh):
     '''
     # NOTE: Be careful where you put log statements in this routine
     try:
-        if not clusterObj.provisioning_suspended: 
-            env_ready,setup_occurred = check_provision_env_ready(clusterObj)
-            start_num_ps_cmds = clusterObj.num_ps_cmd
+        if not nodeGroupObj.provisioning_suspended: 
+            env_ready,setup_occurred = check_provision_env_ready(nodeGroupObj)
+            start_num_ps_cmds = nodeGroupObj.num_ps_cmd
             if env_ready:
-                cull_expired_entries(clusterObj,datetime.now(timezone.utc))
-                num_nodes_to_deploy,cnnro_ids = sum_of_highest_nodes_for_each_user(clusterObj)
+                cull_expired_entries(nodeGroupObj,datetime.now(timezone.utc))
+                num_nodes_to_deploy,cnnro_ids = sum_of_highest_nodes_for_each_user(nodeGroupObj)
                 expire_time = None
-                onnTop = sort_CNN_by_nn_exp(clusterObj).first()
+                onnTop = sort_CNN_by_nn_exp(nodeGroupObj).first()
                 if onnTop is not None:
-                    if need_destroy_for_changed_version_or_is_public(clusterObj,num_nodes_to_deploy):
+                    if need_destroy_for_changed_version_or_is_public(nodeGroupObj,num_nodes_to_deploy):
                         try:
-                            LOG.info(f"TRIGGERED Destroy {clusterObj.org.name} --> cluster v:{clusterObj.cur_version} cluster is_public:{clusterObj.is_public} is_deployed:{clusterObj.is_deployed} v:{clusterObj.version} orgAccount ip:{clusterObj.is_public} onnTop.desired_num_nodes:{onnTop.desired_num_nodes} clusterObj.cfg_asg.num:{clusterObj.cfg_asg.num}")
-                            process_Destroy_cmd(clusterObj=clusterObj, username=clusterObj.org.owner.username)
+                            LOG.info(f"TRIGGERED Destroy {nodeGroupObj.org.name} --> cluster v:{nodeGroupObj.cur_version} cluster is_public:{nodeGroupObj.is_public} is_deployed:{nodeGroupObj.is_deployed} v:{nodeGroupObj.version} orgAccount ip:{nodeGroupObj.is_public} onnTop.desired_num_nodes:{onnTop.desired_num_nodes} nodeGroupObj.cfg_asg.num:{nodeGroupObj.cfg_asg.num}")
+                            process_Destroy_cmd(nodeGroupObj=nodeGroupObj, username=nodeGroupObj.org.owner.username)
                         except Exception as e:
                             LOG.exception("ERROR processing Destroy when version or is_public changes in CNN: caught exception:")
-                            clean_up_CNN_cnnro_ids(clusterObj,suspend_provisioning=True)
-                            LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                            clean_up_CNN_cnnro_ids(nodeGroupObj,suspend_provisioning=True)
+                            LOG.info(f"{nodeGroupObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                             sleep(COOLOFF_SECS)
                     else:
                         user = onnTop.user
                         expire_time = onnTop.expiration
-                        if num_nodes_to_deploy != clusterObj.cfg_asg.num: 
-                            deploy_values ={'min_node_cap': clusterObj.cfg_asg.min, 'desired_num_nodes': num_nodes_to_deploy , 'max_node_cap': clusterObj.cfg_asg.max, 'version': clusterObj.version, 'is_public': clusterObj.is_public, 'expire_time': expire_time }
-                            LOG.info(f"{clusterObj.org.name} Using top entries of each user sorted by num/exp_tm  with num_nodes_to_set:{onnTop.desired_num_nodes} exp_time:{expire_time} ")
+                        if num_nodes_to_deploy != nodeGroupObj.cfg_asg.num: 
+                            deploy_values ={'min_node_cap': nodeGroupObj.cfg_asg.min, 'desired_num_nodes': num_nodes_to_deploy , 'max_node_cap': nodeGroupObj.cfg_asg.max, 'version': nodeGroupObj.version, 'is_public': nodeGroupObj.is_public, 'expire_time': expire_time }
+                            LOG.info(f"{nodeGroupObj.org.name} Using top entries of each user sorted by num/exp_tm  with num_nodes_to_set:{onnTop.desired_num_nodes} exp_time:{expire_time} ")
                             try:
-                                process_Update_cmd(clusterObj=clusterObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
+                                process_Update_cmd(nodeGroupObj=nodeGroupObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
                             except Exception as e:
-                                LOG.exception(f"{e.message} processing top CNN id:{onnTop.id} Update {clusterObj.org.name} {user.username} {deploy_values} Exception:")
-                                clean_up_CNN_cnnro_ids(clusterObj,suspend_provisioning=False)
-                                LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                                LOG.exception(f"{e.message} processing top CNN id:{onnTop.id} Update {nodeGroupObj.org.name} {user.username} {deploy_values} Exception:")
+                                clean_up_CNN_cnnro_ids(nodeGroupObj,suspend_provisioning=False)
+                                LOG.info(f"{nodeGroupObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                                 sleep(COOLOFF_SECS)
-                            clusterObj.num_onn += 1
-                            clusterObj.save(update_fields=['num_onn'])
-                            LOG.info(f"Update {clusterObj.org.name} processed")
+                            nodeGroupObj.num_onn += 1
+                            nodeGroupObj.save(update_fields=['num_onn'])
+                            LOG.info(f"Update {nodeGroupObj.org.name} processed")
                 else:
                     # No entries in table
-                    user = clusterObj.org.owner
-                    if clusterObj.destroy_when_no_nodes and (clusterObj.cfg_asg.min == 0):
-                        if clusterObj.is_deployed:
-                            LOG.info(f"org:{clusterObj.org.name} destroy_when_no_nodes:{clusterObj.destroy_when_no_nodes} min_node_cap:{clusterObj.cfg_asg.min}")
+                    user = nodeGroupObj.org.owner
+                    if nodeGroupObj.destroy_when_no_nodes and (nodeGroupObj.cfg_asg.min == 0):
+                        if nodeGroupObj.is_deployed:
+                            LOG.info(f"org:{nodeGroupObj.org.name} destroy_when_no_nodes:{nodeGroupObj.destroy_when_no_nodes} min_node_cap:{nodeGroupObj.cfg_asg.min}")
                             try:
-                                process_Destroy_cmd(clusterObj=clusterObj, username=user.username)
+                                process_Destroy_cmd(nodeGroupObj=nodeGroupObj, username=user.username)
                             except Exception as e:
-                                LOG.exception("ERROR processing Destroy {clusterObj.org.name} when no entries in CNN: caught exception:")
-                                LOG.warning(f"Destroy {clusterObj.org.name} FAILED when no entries in CNN; Setting destroy_when_no_nodes to False")
-                                clusterObj.destroy_when_no_nodes = False
-                                clusterObj.cfg_asg.min = 0 
-                                clusterObj.cfg_asg.num = 0
-                                clusterObj.save(update_fields=['destroy_when_no_nodes','min_node_cap','desired_num_nodes'])
-                                LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                                LOG.exception("ERROR processing Destroy {nodeGroupObj.org.name} when no entries in CNN: caught exception:")
+                                LOG.warning(f"Destroy {nodeGroupObj.org.name} FAILED when no entries in CNN; Setting destroy_when_no_nodes to False")
+                                nodeGroupObj.destroy_when_no_nodes = False
+                                nodeGroupObj.cfg_asg.min = 0 
+                                nodeGroupObj.cfg_asg.num = 0
+                                nodeGroupObj.save(update_fields=['destroy_when_no_nodes','min_node_cap','desired_num_nodes'])
+                                LOG.info(f"{nodeGroupObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                                 sleep(COOLOFF_SECS)
 
-                            clusterObj.num_onn += 1
-                            clusterObj.save(update_fields=['num_onn'])
-                            LOG.info(f"{clusterObj.org.name} Destroy processed")
+                            nodeGroupObj.num_onn += 1
+                            nodeGroupObj.save(update_fields=['num_onn'])
+                            LOG.info(f"{nodeGroupObj.org.name} Destroy processed")
                     else:
-                        if clusterObj.cfg_asg.min != clusterObj.cfg_asg.num: 
-                            num_entries = ClusterNumNode.objects.filter(cluster=clusterObj).count()
-                            LOG.info(f"{clusterObj.org.name} ({num_entries} (i.e. no) entries left; using min_node_cap:{clusterObj.cfg_asg.min} exp_time:None")
-                            deploy_values ={'min_node_cap': clusterObj.cfg_asg.min, 'desired_num_nodes': clusterObj.cfg_asg.min, 'max_node_cap': clusterObj.cfg_asg.max,'version': clusterObj.version, 'is_public': clusterObj.is_public, 'expire_time': expire_time }
+                        if nodeGroupObj.cfg_asg.min != nodeGroupObj.cfg_asg.num: 
+                            num_entries = ClusterNumNode.objects.filter(cluster=nodeGroupObj).count()
+                            LOG.info(f"{nodeGroupObj.org.name} ({num_entries} (i.e. no) entries left; using min_node_cap:{nodeGroupObj.cfg_asg.min} exp_time:None")
+                            deploy_values ={'min_node_cap': nodeGroupObj.cfg_asg.min, 'desired_num_nodes': nodeGroupObj.cfg_asg.min, 'max_node_cap': nodeGroupObj.cfg_asg.max,'version': nodeGroupObj.version, 'is_public': nodeGroupObj.is_public, 'expire_time': expire_time }
                             try:
-                                process_Update_cmd(clusterObj=clusterObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
+                                process_Update_cmd(nodeGroupObj=nodeGroupObj, username=user.username, deploy_values=deploy_values, expire_time=expire_time)
                             except Exception as e:
-                                LOG.exception("ERROR in Update {clusterObj.org.name} ps_cmd when no entries in CNN and min != desired: caught exception:")
-                                LOG.warning(f"Setting {clusterObj.org.name} min_node_cap to zero; Update FAILED when no entries in CNN and min_node_cap != desired_num_nodes (i.e. current target, assumed num nodes)")
-                                clusterObj.cfg_asg.min = 0 
-                                clusterObj.cfg_asg.num = 0
-                                clusterObj.save(update_fields=['min_node_cap','desired_num_nodes'])
-                                LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                                LOG.exception("ERROR in Update {nodeGroupObj.org.name} ps_cmd when no entries in CNN and min != desired: caught exception:")
+                                LOG.warning(f"Setting {nodeGroupObj.org.name} min_node_cap to zero; Update FAILED when no entries in CNN and min_node_cap != desired_num_nodes (i.e. current target, assumed num nodes)")
+                                nodeGroupObj.cfg_asg.min = 0 
+                                nodeGroupObj.cfg_asg.num = 0
+                                nodeGroupObj.save(update_fields=['min_node_cap','desired_num_nodes'])
+                                LOG.info(f"{nodeGroupObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                                 sleep(COOLOFF_SECS)
 
-                            clusterObj.num_onn += 1
-                            clusterObj.save(update_fields=['num_onn'])
-                            LOG.info(f"{clusterObj.org.name} Update processed")
+                            nodeGroupObj.num_onn += 1
+                            nodeGroupObj.save(update_fields=['num_onn'])
+                            LOG.info(f"{nodeGroupObj.org.name} Update processed")
                 # if we setup the env but did not process any commands, then we need to Refresh to set state
                 need_refresh = False
                 if setup_occurred:
-                    if clusterObj.num_ps_cmd == start_num_ps_cmds:
+                    if nodeGroupObj.num_ps_cmd == start_num_ps_cmds:
                         # setup with no commands processed
                         need_refresh = True
                 else:
-                    if prior_need_refresh and (clusterObj.num_ps_cmd == start_num_ps_cmds):
+                    if prior_need_refresh and (nodeGroupObj.num_ps_cmd == start_num_ps_cmds):
                         # setup with no commands processed
                         need_refresh = True
                 if need_refresh:
                     try:
-                        LOG.info(f"Refresh {clusterObj.org.name} post SetUp")
-                        process_Refresh_cmd(clusterObj=clusterObj, username=clusterObj.owner.username)
+                        LOG.info(f"Refresh {nodeGroupObj.org.name} post SetUp")
+                        process_Refresh_cmd(nodeGroupObj=nodeGroupObj, username=nodeGroupObj.owner.username)
                     except Exception as e:
-                        LOG.exception("ERROR processing Refresh {clusterObj.org.name} caught exception:")
-                        LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+                        LOG.exception("ERROR processing Refresh {nodeGroupObj.org.name} caught exception:")
+                        LOG.info(f"{nodeGroupObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
                         sleep(COOLOFF_SECS)
     except Exception as e:
-        LOG.exception(f"{clusterObj.org.name} caught exception:")
-        LOG.info(f"{clusterObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
+        LOG.exception(f"{nodeGroupObj.org.name} caught exception:")
+        LOG.info(f"{nodeGroupObj.org.name} sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
         for handler in LOG.handlers:
             handler.flush()
         sleep(COOLOFF_SECS)
 
-def get_or_create_ClusterNumNodes(clusterObj,user,desired_num_nodes,expire_date):
+def get_or_create_ClusterNumNodes(nodeGroupObj,user,desired_num_nodes,expire_date):
     # if it doesn't exist create it then process all clusterNumNodes for org                                          
     # if expire date comes from jwt then it will match
     # First try exact match
@@ -424,14 +424,14 @@ def get_or_create_ClusterNumNodes(clusterObj,user,desired_num_nodes,expire_date)
     redundant = False
     msg = ''
     try:
-        clusterNumNode,created = ClusterNumNode.objects.get_or_create(user=user,cluster=clusterObj, desired_num_nodes=desired_num_nodes,expiration=expire_date)
+        clusterNumNode,created = ClusterNumNode.objects.get_or_create(user=user,cluster=nodeGroupObj, desired_num_nodes=desired_num_nodes,expiration=expire_date)
         if created:
             if expire_date is not None:
-                msg = f"Created new entry for {clusterObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
+                msg = f"Created new entry for {nodeGroupObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
             else:
-                msg = f"Created new entry for {clusterObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} with NO expiration"
+                msg = f"Created new entry for {nodeGroupObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} with NO expiration"
         else:         
-            msg = f"An entry already exists for {clusterObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
+            msg = f"An entry already exists for {nodeGroupObj} {user.username} desired_num_nodes {clusterNumNode.desired_num_nodes} uuid:{clusterNumNode.id} expiration:{expire_date.strftime(FMT) if expire_date is not None else 'None'}"
             redundant = True
         LOG.info(f"{msg} cnt:{ClusterNumNode.objects.count()}")
 
@@ -450,17 +450,17 @@ def process_num_nodes_api(org_name,cluster_name,user,desired_num_nodes,expire_ti
         if int(desired_num_nodes) < 0:
             msg = f"desired_num_nodes:{desired_num_nodes} must be >= 0"
             raise ValidationError(msg)
-        clusterObj = NodeGroup.objects.get(name=cluster_name)
-        if (not clusterObj.is_deployed) and (not clusterObj.allow_deploy_by_token):
-            msg = f"NodeGroup {clusterObj} is not configured to allow deploy by token"
+        nodeGroupObj = NodeGroup.objects.get(name=cluster_name)
+        if (not nodeGroupObj.is_deployed) and (not nodeGroupObj.allow_deploy_by_token):
+            msg = f"NodeGroup {nodeGroupObj} is not configured to allow deploy by token"
             raise ClusterDeployAuthError(msg)
-        if(not clusterObj.is_deployed):
-            msg = f"Deploying {clusterObj.org.name} cluster"
+        if(not nodeGroupObj.is_deployed):
+            msg = f"Deploying {nodeGroupObj.org.name} cluster"
         else:
-            msg = f"Updating {clusterObj.org.name} cluster"
+            msg = f"Updating {nodeGroupObj.org.name} cluster"
 
         clusterNumNode,redundant,onn_msg = get_or_create_ClusterNumNodes(user=user,
-                                                                    cluster=clusterObj,
+                                                                    cluster=nodeGroupObj,
                                                                     desired_num_nodes=desired_num_nodes,
                                                                     expire_date=expire_time)
         msg += f" {onn_msg}"
@@ -527,19 +527,19 @@ def get_current_cost_report(name, gran, time_now):
     #LOG.info("Sending rsp...")
     return MessageToJson(rsp), rsp
 
-def get_org_cost_data(clusterObj, granObj, clusterCostObj):
+def get_org_cost_data(nodeGroupObj, granObj, clusterCostObj):
     THIS_FMT = FMT_DAILY
     updated = False
     time_now = datetime.now(timezone.utc)
     time_stale = time_now - clusterCostObj.cost_refresh_time
-    LOG.info("%s %s now:%s/%s clusterCostObj.cost_refresh_time:%s time_stale:%s > %s ?", clusterObj.org.name,
+    LOG.info("%s %s now:%s/%s clusterCostObj.cost_refresh_time:%s time_stale:%s > %s ?", nodeGroupObj.org.name,
              granObj.granularity, datetime.now(timezone.utc), datetime.now(), clusterCostObj.cost_refresh_time, time_stale, timedelta(hours=8))
     if time_stale > timedelta(hours=8) or str(clusterCostObj.ccr) == "{}" or str(clusterCostObj.ccr) == NULL_CCR:
         #LOG.info("Calling get_current_cost_report <<<<<<<<<<<-------------->>>>>>>>>>>")
-        ccr, rsp = get_current_cost_report(clusterObj.org.name, granObj.granularity, time_now)
+        ccr, rsp = get_current_cost_report(nodeGroupObj.org.name, granObj.granularity, time_now)
         if rsp.server_error == False:
             clusterCostObj.cost_refresh_time = time_now
-            clusterObj.most_recent_recon_time = time_now 
+            nodeGroupObj.most_recent_recon_time = time_now 
             if len(rsp.tm) > 0:
                 if(clusterCostObj.gran.granularity == 'HOURLY'):
                     THIS_FMT = FMT_Z
@@ -558,7 +558,7 @@ def get_org_cost_data(clusterObj, granObj, clusterCostObj):
                 LOG.info("Saved %s clusterCostObj for:%s tm:%s",
                         clusterCostObj.gran.granularity,  clusterCostObj.org.name, clusterCostObj.tm)
             else:
-                LOG.info("No cost data for %s %s",clusterObj.org.name, granObj.granularity)
+                LOG.info("No cost data for %s %s",nodeGroupObj.org.name, granObj.granularity)
                 if str(clusterCostObj.ccr) == "{}":
                     clusterCostObj.ccr = "{ }" # so keep from reading null CCRs
             clusterCostObj.save() # this only saves the updated clusterCostObj.cost_refresh_time
@@ -577,21 +577,21 @@ def getGranChoice(granularity):
         raise
     return granObj
 
-def update_clusterCost(clusterObj, gran):
+def update_nodeGroupCost(nodeGroupObj, gran):
     granObj = getGranChoice(gran)
     get_data = False
     clusterCostObj = None
     try:
-        clusterCostObj = Cost.objects.get(cluster=clusterObj, gran=granObj)
+        clusterCostObj = Cost.objects.get(cluster=nodeGroupObj, gran=granObj)
     except ObjectDoesNotExist as e:
-        LOG.warning(f"no clusterCostObj for {clusterObj.org.name} {granObj.granularity}")
-        clusterCostObj = Cost(cluster=clusterObj, gran=granObj, cost_refresh_time=datetime.now(timezone.utc)-timedelta(weeks=52),tm=datetime.now(timezone.utc))
+        LOG.warning(f"no clusterCostObj for {nodeGroupObj.org.name} {granObj.granularity}")
+        clusterCostObj = Cost(cluster=nodeGroupObj, gran=granObj, cost_refresh_time=datetime.now(timezone.utc)-timedelta(weeks=52),tm=datetime.now(timezone.utc))
         LOG.info("%s %s %s New clusterCostObj created", clusterCostObj.org.name,clusterCostObj.gran.granularity, clusterCostObj.tm)
         get_data = True
     if clusterCostObj is not None:
         #LOG.info(datetime.now(timezone.utc))
         diff_tm = datetime.now(timezone.utc) - clusterCostObj.cost_refresh_time
-        #LOG.info("%s %s %s - %s = %s", clusterObj.org.name, gran,datetime.now(timezone.utc), clusterCostObj.tm, diff_tm)
+        #LOG.info("%s %s %s - %s = %s", nodeGroupObj.org.name, gran,datetime.now(timezone.utc), clusterCostObj.tm, diff_tm)
         if str(clusterCostObj.ccr) == "{}" or str(clusterCostObj.ccr) == NULL_CCR:
             get_data = True
             LOG.info("Triggered by empty set")
@@ -601,13 +601,13 @@ def update_clusterCost(clusterObj, gran):
                 LOG.info("Triggered by stale ccr > 8 hrs")
                 get_data = True
     else:
-        LOG.error("FAILED to create clusterCostObj for %s %s",clusterObj.org.name, granObj.granularity)
+        LOG.error("FAILED to create clusterCostObj for %s %s",nodeGroupObj.org.name, granObj.granularity)
         get_data = False
     updated = False
     if get_data:
         # will create clusterCostObj if needed
-        LOG.info("calling get_org_cost_data for %s %s",clusterObj.org.name, granObj.granularity)
-        updated = get_org_cost_data(clusterObj, granObj, clusterCostObj)
+        LOG.info("calling get_org_cost_data for %s %s",nodeGroupObj.org.name, granObj.granularity)
+        updated = get_org_cost_data(nodeGroupObj, granObj, clusterCostObj)
 
     next_refresh_time = clusterCostObj.cost_refresh_time +  timedelta(hours=8)
     if updated:
@@ -618,27 +618,27 @@ def update_clusterCost(clusterObj, gran):
     return updated
 
 
-def update_ccr(clusterObj):
+def update_ccr(nodeGroupObj):
     '''
         updates the current cost report from the ps-server 
     '''
-    updated = (update_clusterCost(clusterObj, "HOURLY") or update_clusterCost(clusterObj, "DAILY") or update_clusterCost(clusterObj, "MONTHLY"))
+    updated = (update_nodeGroupCost(nodeGroupObj, "HOURLY") or update_nodeGroupCost(nodeGroupObj, "DAILY") or update_nodeGroupCost(nodeGroupObj, "MONTHLY"))
     LOG.info("updated:%s",updated)
     return updated
 
-def update_cur_num_nodes(clusterObj):
-    #LOG.info(f"update_cur_num_nodes:{clusterObj.org.name}")
+def update_cur_num_nodes(nodeGroupObj):
+    #LOG.info(f"update_cur_num_nodes:{nodeGroupObj.org.name}")
     with ps_client.create_client_channel("account") as channel:
         try:
             ac = ps_server_pb2_grpc.AccountStub(channel)
             region = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-            req = ps_server_pb2.NumNodesReq(name=clusterObj.org.name,cluster_name=clusterObj.name,version=clusterObj.org.version,region=region)
+            req = ps_server_pb2.NumNodesReq(name=nodeGroupObj.org.name,cluster_name=nodeGroupObj.name,version=nodeGroupObj.org.version,region=region)
             #LOG.info(req)
             rsp = ac.NumNodes(req)
-            clusterObj.cur_asg.num = rsp.num_nodes
-            clusterObj.save(update_fields=['cur_nodes'])
-            LOG.info(f"update_cur_num_nodes:{clusterObj} cur_nodes:{clusterObj.cur_asg.num}")
-            return clusterObj.cur_asg.num
+            nodeGroupObj.cur_asg.num = rsp.num_nodes
+            nodeGroupObj.save(update_fields=['cur_nodes'])
+            LOG.info(f"update_cur_num_nodes:{nodeGroupObj} cur_nodes:{nodeGroupObj.cur_asg.num}")
+            return nodeGroupObj.cur_asg.num
         except Exception as e:
             LOG.error(f"FAILED: caught exception on NumNodesReq")
             raise
@@ -658,48 +658,48 @@ def clamp_time(hours):
     return days,hours
 
 
-def update_burn_rates(clusterObj):
+def update_burn_rates(nodeGroupObj):
     global FMT
     try:
-        update_cur_num_nodes(clusterObj)
+        update_cur_num_nodes(nodeGroupObj)
 
-        min_nodes = clusterObj.cur_asg.min
-        max_nodes = clusterObj.cur_asg.max
+        min_nodes = nodeGroupObj.cur_asg.min
+        max_nodes = nodeGroupObj.cur_asg.max
 
         if min_nodes > 0:
-            forecast_min_hrly = clusterObj.node_mgr_fixed_cost + min_nodes*clusterObj.node_fixed_cost
+            forecast_min_hrly = nodeGroupObj.node_mgr_fixed_cost + min_nodes*nodeGroupObj.node_fixed_cost
         else:
             forecast_min_hrly = 0.0001
 
-        if clusterObj.cur_asg.num > 0:
-            forecast_cur_hrly = clusterObj.node_mgr_fixed_cost + clusterObj.cur_asg.num*clusterObj.node_fixed_cost
+        if nodeGroupObj.cur_asg.num > 0:
+            forecast_cur_hrly = nodeGroupObj.node_mgr_fixed_cost + nodeGroupObj.cur_asg.num*nodeGroupObj.node_fixed_cost
         else:
             forecast_cur_hrly = 0.0001
 
-        forecast_max_hrly = clusterObj.node_mgr_fixed_cost + max_nodes*clusterObj.node_fixed_cost
+        forecast_max_hrly = nodeGroupObj.node_mgr_fixed_cost + max_nodes*nodeGroupObj.node_fixed_cost
 
-        clusterObj.min_hrly      = forecast_min_hrly
-        clusterObj.cur_hrly      = forecast_cur_hrly
-        clusterObj.max_hrly      = forecast_max_hrly
-        clusterObj.save(update_fields=['min_hrly','cur_hrly','max_hrly'])
-        #LOG.info(f"{clusterObj.org.name} forecast min/cur/max hrly burn rate {forecast_min_hrly}/{forecast_cur_hrly}/{forecast_max_hrly}")
+        nodeGroupObj.min_hrly      = forecast_min_hrly
+        nodeGroupObj.cur_hrly      = forecast_cur_hrly
+        nodeGroupObj.max_hrly      = forecast_max_hrly
+        nodeGroupObj.save(update_fields=['min_hrly','cur_hrly','max_hrly'])
+        #LOG.info(f"{nodeGroupObj.org.name} forecast min/cur/max hrly burn rate {forecast_min_hrly}/{forecast_cur_hrly}/{forecast_max_hrly}")
 
-        min_days_left,min_hrs_left = clamp_time(float(clusterObj.balance)/forecast_min_hrly)
+        min_days_left,min_hrs_left = clamp_time(float(nodeGroupObj.balance)/forecast_min_hrly)
         # LOG.info("%s = %s/%s    min_hrs_left = balance/forecast_min_hrly (assuming no allowance) ",
-        #          min_hrs_left, clusterObj.balance, forecast_min_hrly)
-        clusterObj.min_ddt = datetime.now(timezone.utc)+timedelta(days=min_days_left,hours=min_hrs_left)
+        #          min_hrs_left, nodeGroupObj.balance, forecast_min_hrly)
+        nodeGroupObj.min_ddt = datetime.now(timezone.utc)+timedelta(days=min_days_left,hours=min_hrs_left)
 
-        cur_days_left,cur_hrs_left = clamp_time(float(clusterObj.balance)/forecast_cur_hrly)
+        cur_days_left,cur_hrs_left = clamp_time(float(nodeGroupObj.balance)/forecast_cur_hrly)
         # LOG.info("%s = %s/%s    cur_hrs_left = balance/forecast_cur_hrly  (assuming no allowance) ",
-        #          cur_hrs_left, clusterObj.balance, forecast_cur_hrly)
-        clusterObj.cur_ddt = datetime.now(timezone.utc)+timedelta(days=cur_days_left,hours=cur_hrs_left)
+        #          cur_hrs_left, nodeGroupObj.balance, forecast_cur_hrly)
+        nodeGroupObj.cur_ddt = datetime.now(timezone.utc)+timedelta(days=cur_days_left,hours=cur_hrs_left)
 
-        max_days_left,max_hrs_left = clamp_time(float(clusterObj.balance)/forecast_max_hrly)
+        max_days_left,max_hrs_left = clamp_time(float(nodeGroupObj.balance)/forecast_max_hrly)
         # LOG.info("%s = %s/%s    max_hrs_left = balance/forecast_max_hrly  (assuming no allowance) ",
-        #          max_hrs_left, clusterObj.balance, forecast_max_hrly)
-        clusterObj.max_ddt = datetime.now(timezone.utc)+timedelta(days=max_days_left,hours=max_hrs_left)
+        #          max_hrs_left, nodeGroupObj.balance, forecast_max_hrly)
+        nodeGroupObj.max_ddt = datetime.now(timezone.utc)+timedelta(days=max_days_left,hours=max_hrs_left)
 
-        clusterObj.save(update_fields=['min_ddt','cur_ddt','max_ddt'])
+        nodeGroupObj.save(update_fields=['min_ddt','cur_ddt','max_ddt'])
         # LOG.info("Assuming no allowance.... min_ddt: %s cur_ddt: %s max_ddt: %s",
         #          datetime.strftime(min_ddt, FMT),
         #          datetime.strftime(cur_ddt, FMT),
@@ -849,12 +849,12 @@ def reconcile_budget(budgetObj):
             #  below is the Hourly for today
             #
             LOG.info(f"{parent_name} now:{time_now_str} start_tm_str:{start_tm_str} end_tm_str:{end_tm_str}")
-            rsp = ac.DailyHistCost(ps_server_pb2.DailyHistCostReq(name=clusterObj.org.name, cluster_name=clusterObj.name, start_tm=start_tm_str, end_tm=end_tm_str))
+            rsp = ac.DailyHistCost(ps_server_pb2.DailyHistCostReq(name=nodeGroupObj.org.name, cluster_name=nodeGroupObj.name, start_tm=start_tm_str, end_tm=end_tm_str))
             if rsp.server_error:
                 LOG.error(f"{parent_name} DailyHistCost got this error:{rsp.error_msg}")
                 raise Exception(f"ps server error caught:{rsp.error_msg}")            
             if len(rsp.tm) > 0:
-                new_balance,new_fytd_accrued_cost,new_mrct = calculate_account_bal_and_fytd_bal(clusterObj,rsp)
+                new_balance,new_fytd_accrued_cost,new_mrct = calculate_account_bal_and_fytd_bal(nodeGroupObj,rsp)
                 #LOG.info(f"budgetObj.balance:{budgetObj.balance} new_balance:{new_balance}")
                 if budgetObj.balance != new_balance:
                     budgetObj.balance = new_balance
@@ -894,7 +894,7 @@ def reconcile_budget(budgetObj):
                 if budgetObj.most_recent_charge_time != new_mrct:
                     budgetObj.most_recent_charge_time = new_mrct
                     LOG.info(f"####### {parent_name} updating mrct:{budgetObj.most_recent_charge_time} from TodaysCost")
-                clusterObj.save()
+                nodeGroupObj.save()
             else:
                 LOG.info(f"{parent_name} is debited hourly up to {datetime.strftime(budgetObj.most_recent_charge_time, FMT)} NO CHANGE balance:{budgetObj.balance:.2f}")
         else:
@@ -918,12 +918,12 @@ def is_budget_broke(budgetObj):
         LOG.info(f"{parent_name} has a remaining balance of:{budgetObj.balance:.2f}")
     return broke_status
 
-def is_cluster_broke(clusterObj):
+def is_cluster_broke(nodeGroupObj):
     broke_status = False 
-    if(clusterObj.is_deployed):
-        broke_status = is_budget_broke(clusterObj.budget)
+    if(nodeGroupObj.is_deployed):
+        broke_status = is_budget_broke(nodeGroupObj.budget)
     else:
-        LOG.info(f"{clusterObj} deployed_state is {clusterObj.deployed_state}")
+        LOG.info(f"{nodeGroupObj} deployed_state is {nodeGroupObj.deployed_state}")
     return broke_status
 
 
@@ -939,7 +939,7 @@ def create_forecast(budgetObj, hourlyRate, daily_days_to_forecast=None, hourly_d
 
     daily_days_to_forecast = daily_days_to_forecast or 91
     hourly_days_to_forecast = hourly_days_to_forecast or 14
-    #LOG.info("%s %2g", {clusterObj} {hrlyRate})
+    #LOG.info("%s %2g", {nodeGroupObj} {hrlyRate})
     global FMT_HOURLY, FMT_DAILY
     A_LONG_TIME_FROM_NOW = datetime.now(timezone.utc) + timedelta(days=DISPLAY_EXP_TM+DISPLAY_EXP_TM_MARGIN)
     drop_dead_time = A_LONG_TIME_FROM_NOW
@@ -1046,22 +1046,22 @@ def create_forecast(budgetObj, hourlyRate, daily_days_to_forecast=None, hourly_d
     fc_monthly_tm_bal = json.dumps(tm_bal_tuple)
     return drop_dead_time, fc_hourly, fc_daily, fc_monthly, fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal
 
-def create_all_forecasts(clusterObj):
-    update_cur_num_nodes(clusterObj)
-    LOG.info(f"Hourly burn rates: {clusterObj.min_hrly}/{clusterObj.cur_hrly}/{clusterObj.max_hrly}")
+def create_all_forecasts(nodeGroupObj):
+    update_cur_num_nodes(nodeGroupObj)
+    LOG.info(f"Hourly burn rates: {nodeGroupObj.min_hrly}/{nodeGroupObj.cur_hrly}/{nodeGroupObj.max_hrly}")
 
-    clusterObj.min_ddt, clusterObj.fc_min_hourly, clusterObj.fc_min_daily, clusterObj.fc_min_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal  = create_forecast(clusterObj, clusterObj.min_hrly)
+    nodeGroupObj.min_ddt, nodeGroupObj.fc_min_hourly, nodeGroupObj.fc_min_daily, nodeGroupObj.fc_min_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal  = create_forecast(nodeGroupObj, nodeGroupObj.min_hrly)
     #LOG.info(f"MIN fc_hourly_tm_bal:{fc_hourly_tm_bal} fc_daily_tm_bal:{fc_daily_tm_bal} fc_monthly_tm_bal:{fc_monthly_tm_bal} ")
-    #LOG.info(f"MIN min_ddt:{clusterObj.min_ddt.strftime(FMT)} fc_min_hourly:{clusterObj.fc_min_hourly},fc_min_daily:{clusterObj.fc_min_daily},fc_min_monthly:{clusterObj.fc_min_monthly}")
-    clusterObj.cur_ddt, clusterObj.fc_cur_hourly, clusterObj.fc_cur_daily, clusterObj.fc_cur_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(clusterObj, clusterObj.cur_hrly)
+    #LOG.info(f"MIN min_ddt:{nodeGroupObj.min_ddt.strftime(FMT)} fc_min_hourly:{nodeGroupObj.fc_min_hourly},fc_min_daily:{nodeGroupObj.fc_min_daily},fc_min_monthly:{nodeGroupObj.fc_min_monthly}")
+    nodeGroupObj.cur_ddt, nodeGroupObj.fc_cur_hourly, nodeGroupObj.fc_cur_daily, nodeGroupObj.fc_cur_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(nodeGroupObj, nodeGroupObj.cur_hrly)
     #LOG.info(f"CUR fc_hourly_tm_bal:{fc_hourly_tm_bal} fc_daily_tm_bal:{fc_daily_tm_bal} fc_monthly_tm_bal:{fc_monthly_tm_bal} ")
-    #LOG.info(f"CUR cur_ddt:{clusterObj.cur_ddt.strftime(FMT)} fc_cur_hourly:{clusterObj.fc_cur_hourly},fc_cur_daily:{clusterObj.fc_cur_daily},fc_cur_monthly:{clusterObj.fc_cur_monthly}")
-    clusterObj.max_ddt, clusterObj.fc_max_hourly, clusterObj.fc_max_daily, clusterObj.fc_max_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(clusterObj, clusterObj.max_hrly)
+    #LOG.info(f"CUR cur_ddt:{nodeGroupObj.cur_ddt.strftime(FMT)} fc_cur_hourly:{nodeGroupObj.fc_cur_hourly},fc_cur_daily:{nodeGroupObj.fc_cur_daily},fc_cur_monthly:{nodeGroupObj.fc_cur_monthly}")
+    nodeGroupObj.max_ddt, nodeGroupObj.fc_max_hourly, nodeGroupObj.fc_max_daily, nodeGroupObj.fc_max_monthly,fc_hourly_tm_bal, fc_daily_tm_bal, fc_monthly_tm_bal = create_forecast(nodeGroupObj, nodeGroupObj.max_hrly)
     #LOG.info(f"MAX fc_hourly_tm_bal:{fc_hourly_tm_bal} fc_daily_tm_bal:{fc_daily_tm_bal} fc_monthly_tm_bal:{fc_monthly_tm_bal} ")
-    #LOG.info(f"MAX max_ddt:{clusterObj.max_ddt.strftime(FMT)} fc_max_hourly:{clusterObj.fc_max_hourly},fc_max_daily:{clusterObj.fc_max_daily},fc_max_monthly:{clusterObj.fc_max_monthly}")
+    #LOG.info(f"MAX max_ddt:{nodeGroupObj.max_ddt.strftime(FMT)} fc_max_hourly:{nodeGroupObj.fc_max_hourly},fc_max_daily:{nodeGroupObj.fc_max_daily},fc_max_monthly:{nodeGroupObj.fc_max_monthly}")
 
-    LOG.info(f"min_ddt:{clusterObj.min_ddt.strftime(FMT)},cur_ddt:{clusterObj.cur_ddt.strftime(FMT)},max_ddt:{clusterObj.max_ddt.strftime(FMT)}")
-    clusterObj.save(update_fields=['min_ddt','cur_ddt','max_ddt','fc_min_hourly','fc_min_daily','fc_min_monthly','fc_cur_hourly','fc_cur_daily','fc_cur_monthly','fc_max_hourly','fc_max_daily','fc_max_monthly'])
+    LOG.info(f"min_ddt:{nodeGroupObj.min_ddt.strftime(FMT)},cur_ddt:{nodeGroupObj.cur_ddt.strftime(FMT)},max_ddt:{nodeGroupObj.max_ddt.strftime(FMT)}")
+    nodeGroupObj.save(update_fields=['min_ddt','cur_ddt','max_ddt','fc_min_hourly','fc_min_daily','fc_min_monthly','fc_cur_hourly','fc_cur_daily','fc_cur_monthly','fc_max_hourly','fc_max_daily','fc_max_monthly'])
 
 
 # def create_all_forecasts_for_all_orgs():
@@ -1108,9 +1108,9 @@ def cost_accounting_org(orgAccountObj):
     except Exception as e:
         LOG.exception("Error in cost_accounting: %s", repr(e))
 
-def cost_accounting_cluster(clusterObj):
+def cost_accounting_cluster(nodeGroupObj):
     try:
-        budgetObj = clusterObj.budget
+        budgetObj = nodeGroupObj.budget
         if update_ccr(budgetObj):
             update_burn_rates(budgetObj) # auto scaling changes num_nodes
             create_all_forecasts(budgetObj)
@@ -1141,7 +1141,7 @@ def get_cli_html(cli):
                 "".join(cli.stderr), full=False)
     return console_html
 
-def getConsoleHtml(clusterObj, rrsp):
+def getConsoleHtml(nodeGroupObj, rrsp):
     console_html = ''
     try:
         console_html = get_cli_html(rrsp.cli)
@@ -1155,32 +1155,32 @@ def getConsoleHtml(clusterObj, rrsp):
         LOG.exception("caught exception:")
         failed_cli = ps_server_pb2.cli_rsp(valid=False)
         rrsp = ps_server_pb2.Response(
-            done=True, name=clusterObj.org.name, cli=failed_cli)
+            done=True, name=nodeGroupObj.org.name, cli=failed_cli)
         return 500, ps_server_pb2.PS_AjaxResponseData(rsp=rrsp, console_html=console_html, web_error=True, web_error_msg='caught exception in web server')
 
-def remove_num_node_requests(user,clusterObj,only_owned_by_user=None):
+def remove_num_node_requests(user,nodeGroupObj,only_owned_by_user=None):
     try:
         only_owned_by_user = only_owned_by_user or False
-        LOG.info(f"{user.username} cleaning up ClusterNumNode for {clusterObj.org.name} {f'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{ClusterNumNode.objects.count()}")
+        LOG.info(f"{user.username} cleaning up ClusterNumNode for {nodeGroupObj.org.name} {f'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{ClusterNumNode.objects.count()}")
         if only_owned_by_user:
-            cnns = ClusterNumNode.objects.filter(cluster=clusterObj,user=user)
+            cnns = ClusterNumNode.objects.filter(cluster=nodeGroupObj,user=user)
         else:
-            cnns = ClusterNumNode.objects.filter(cluster=clusterObj)
+            cnns = ClusterNumNode.objects.filter(cluster=nodeGroupObj)
         for cnn in cnns:
             LOG.info(f"{cnn.user.username} deleting ClusterNumNode {cnn.org.name}")
-            if clusterObj.cnnro_ids is not None:
-                if str(cnn.id) in clusterObj.cnnro_ids:
+            if nodeGroupObj.cnnro_ids is not None:
+                if str(cnn.id) in nodeGroupObj.cnnro_ids:
                     LOG.info(f"Skipping active ClusterNumNode.id:{cnn.id}")
                 else:
                     cnn.delete()
             else:
                 cnn.delete()
-        jrsp = {'status': "SUCCESS","msg":f"{user.username} cleaned all PENDING org node reqs for {clusterObj} "}
-        LOG.info(f"{user.username} cleaned up ClusterNumNode for {clusterObj} {'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{ClusterNumNode.objects.count()}")
+        jrsp = {'status': "SUCCESS","msg":f"{user.username} cleaned all PENDING org node reqs for {nodeGroupObj} "}
+        LOG.info(f"{user.username} cleaned up ClusterNumNode for {nodeGroupObj} {'owned by:{user.username}' if only_owned_by_user else ''} onn_cnt:{ClusterNumNode.objects.count()}")
         return jrsp
     except Exception as e:
         LOG.exception("caught exception:")
-        jrsp = {'status': "FAILED","error_msg":f"Server Error; Request by {user.username} to clean ALL org node reqs for {clusterObj} FAILED"}
+        jrsp = {'status': "FAILED","error_msg":f"Server Error; Request by {user.username} to clean ALL org node reqs for {nodeGroupObj} FAILED"}
 
 def init_new_org_memberships(orgAccountObj):
     # automatically make owner an active member
@@ -1202,22 +1202,22 @@ def init_new_org_memberships(orgAccountObj):
                     m.user.first_name, m.user.last_name, m.user.username, m.org.name)
     return msg
 
-def ps_cmd_cleanup(clusterObj,st,org_cmd_str):
-    clusterObj.active_ps_cmd = ''  # ALWAYS clear this!
-    clusterObj.save(update_fields=['active_ps_cmd'])
-    update_cur_num_nodes(clusterObj)
+def ps_cmd_cleanup(nodeGroupObj,st,org_cmd_str):
+    nodeGroupObj.active_ps_cmd = ''  # ALWAYS clear this!
+    nodeGroupObj.save(update_fields=['active_ps_cmd'])
+    update_cur_num_nodes(nodeGroupObj)
     time_to_process = datetime.now(timezone.utc) - st
     time_to_process = time_to_process - timedelta(microseconds=time_to_process.microseconds)
     LOG.info(f"DONE {org_cmd_str} has completed in {str(time_to_process)}")
 
-def process_rsp_generator(clusterObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_str, deploy_values=None, expire_time=None):
+def process_rsp_generator(nodeGroupObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_str, deploy_values=None, expire_time=None):
     '''
     This function processes the response generator from the ps-server
         for Update, Refresh and Destroy commands. They all send the same response stream
     '''
     LOG.info(f"process_rsp_generator {org_cmd_str} {deploy_values if deploy_values is not None else ''} {expire_time.strftime(FMT) if expire_time is not None else ''}")
-    clusterObj.active_ps_cmd = ps_cmd
-    clusterObj.save(update_fields=['active_ps_cmd'])
+    nodeGroupObj.active_ps_cmd = ps_cmd
+    nodeGroupObj.save(update_fields=['active_ps_cmd'])
     stopped = False
     iterations = 0
     got_ps_server_error = False
@@ -1234,34 +1234,34 @@ def process_rsp_generator(clusterObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_s
                     LOG.error(f"{org_cmd_str} iter:<{iterations}> got None response from ps_server!")
                     stopped = True # if we get here then we got a None response from the ps_server
                 else:
-                    rsp_status, console_html = getConsoleHtml(clusterObj, rrsp)
+                    rsp_status, console_html = getConsoleHtml(nodeGroupObj, rrsp)
                     psCmdResultObj.ps_cmd_output += console_html
                     psCmdResultObj.save()
                     if rrsp.state.valid:
                         LOG.info(f"{org_cmd_str} iter:<{iterations}> got valid state in rsp with state:{rrsp.state} using deploy_values:{deploy_values}")
                         if deploy_values:
-                            update_cur_num_nodes(clusterObj) # this updates the cur_asg.num
-                            clusterObj.cur_asg.min= deploy_values['min_node_cap']
-                            clusterObj.cur_asg.max = deploy_values['max_node_cap']
-                            clusterObj.cur_version = deploy_values['version']
+                            update_cur_num_nodes(nodeGroupObj) # this updates the cur_asg.num
+                            nodeGroupObj.cur_asg.min= deploy_values['min_node_cap']
+                            nodeGroupObj.cur_asg.max = deploy_values['max_node_cap']
+                            nodeGroupObj.cur_version = deploy_values['version']
                             
-                            clusterObj.is_public = deploy_values['is_public']
-                            clusterObj.expire_time = expire_time
+                            nodeGroupObj.is_public = deploy_values['is_public']
+                            nodeGroupObj.expire_time = expire_time
                             # the cfg_asg.num is the desired num nodes and is only set upon a successful completion of an Update command
-                            clusterObj.cfg_asg.num = int(deploy_values['desired_num_nodes'])
-                            clusterObj.save(update_fields=['cur_asg','cur_version','is_public','expire_time'])
+                            nodeGroupObj.cfg_asg.num = int(deploy_values['desired_num_nodes'])
+                            nodeGroupObj.save(update_fields=['cur_asg','cur_version','is_public','expire_time'])
                         if ps_cmd == 'Destroy': # must set to zero so future desired node requests will always be differnt than current to trigger deploy
-                            clusterObj.cfg_asg.num = 0
-                            clusterObj.save(update_fields=['asg'])
-                        clusterObj.deployed_state = rrsp.state.deployed_state
-                        clusterObj.is_deployed = rrsp.state.deployed
-                        clusterObj.mgr_ip_address = rrsp.state.ip_address.replace('"', '')
-                        if clusterObj.mgr_ip_address == '':
-                            clusterObj.mgr_ip_address = '0.0.0.0'
-                        if not clusterObj.is_deployed:
-                            clusterObj.cur_version = ''
-                        clusterObj.save(update_fields=['deployed_state','is_deployed','cur_version','mgr_ip_address'])
-                        msg = f" Saving state of {clusterObj.org.name} cluster -> is_deployed:{clusterObj.is_deployed} deployed_state:{clusterObj.deployed_state} cur_version:{clusterObj.cur_version} mgr_ip_address:{clusterObj.mgr_ip_address}"
+                            nodeGroupObj.cfg_asg.num = 0
+                            nodeGroupObj.save(update_fields=['asg'])
+                        nodeGroupObj.deployed_state = rrsp.state.deployed_state
+                        nodeGroupObj.is_deployed = rrsp.state.deployed
+                        nodeGroupObj.mgr_ip_address = rrsp.state.ip_address.replace('"', '')
+                        if nodeGroupObj.mgr_ip_address == '':
+                            nodeGroupObj.mgr_ip_address = '0.0.0.0'
+                        if not nodeGroupObj.is_deployed:
+                            nodeGroupObj.cur_version = ''
+                        nodeGroupObj.save(update_fields=['deployed_state','is_deployed','cur_version','mgr_ip_address'])
+                        msg = f" Saving state of {nodeGroupObj.org.name} cluster -> is_deployed:{nodeGroupObj.is_deployed} deployed_state:{nodeGroupObj.deployed_state} cur_version:{nodeGroupObj.cur_version} mgr_ip_address:{nodeGroupObj.mgr_ip_address}"
                         LOG.info(msg)
                     if rrsp.ps_server_error:
                         got_ps_server_error = True
@@ -1276,8 +1276,8 @@ def process_rsp_generator(clusterObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_s
                 stopped = True
                 if not got_ps_server_error:
                     LOG.info(f"{org_cmd_str} iter:<{iterations}> incrementing num_ps_cmd_successful")
-                    clusterObj.num_ps_cmd_successful += 1
-                    clusterObj.save(update_fields=['num_ps_cmd_successful'])
+                    nodeGroupObj.num_ps_cmd_successful += 1
+                    nodeGroupObj.save(update_fields=['num_ps_cmd_successful'])
                 psCmdResultObj.error = ''
                 psCmdResultObj.save(update_fields=['error'])
                 LOG.info(f"{org_cmd_str} iter:<{iterations}> got expected StopIteration exception")
@@ -1307,25 +1307,25 @@ def process_rsp_generator(clusterObj, ps_cmd, rsp_gen, psCmdResultObj, org_cmd_s
         raise ProvisionCmdError(f"{error_msg}:{str(e)}")
     LOG.info(f"{org_cmd_str} iter:<{iterations}> Done")
 
-def get_psCmdResultObj(clusterObj, ps_cmd, version=None, username=None, is_adhoc=False):
-    psCmdResultObj = PsCmdResult.objects.create(cluster=clusterObj)
+def get_psCmdResultObj(nodeGroupObj, ps_cmd, version=None, username=None, is_adhoc=False):
+    psCmdResultObj = PsCmdResult.objects.create(cluster=nodeGroupObj)
     psCmdResultObj.error = 'still processing'
     psCmdResultObj.ps_cmd_output = ''
     if is_adhoc:
-        psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {clusterObj.org.name} Ad-Hoc "
+        psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {nodeGroupObj.org.name} Ad-Hoc "
     else:
         if ps_cmd == 'SetUp':
-            psCmdResultObj.ps_cmd_summary_label = f" --- Configure {clusterObj.org.name} "
+            psCmdResultObj.ps_cmd_summary_label = f" --- Configure {nodeGroupObj.org.name} "
         else:
-            psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {clusterObj.org.name} "
+            psCmdResultObj.ps_cmd_summary_label = f" --- {ps_cmd} {nodeGroupObj.org.name} "
     if version is not None:
-        psCmdResultObj.ps_cmd_summary_label += f" with version {clusterObj.version}"
+        psCmdResultObj.ps_cmd_summary_label += f" with version {nodeGroupObj.version}"
     psCmdResultObj.save()
     if ps_cmd == 'SetUp':
-        clusterObj.num_setup_cmd += 1
-        clusterObj.save(update_fields=['num_setup_cmd'])
-    clusterObj.num_ps_cmd += 1
-    clusterObj.save(update_fields=['num_ps_cmd'])
+        nodeGroupObj.num_setup_cmd += 1
+        nodeGroupObj.save(update_fields=['num_setup_cmd'])
+    nodeGroupObj.num_ps_cmd += 1
+    nodeGroupObj.save(update_fields=['num_ps_cmd'])
     if username is not None:
         try:
             get_user_model().objects.get(username=username)
@@ -1337,23 +1337,23 @@ def get_psCmdResultObj(clusterObj, ps_cmd, version=None, username=None, is_adhoc
         psCmdResultObj.ps_cmd_summary_label += f" {username}"
         psCmdResultObj.save()
 
-    org_cmd_str = f"{clusterObj.org.name} cmd-{clusterObj.num_ps_cmd}: {ps_cmd} {username if username is not None else ''}"
+    org_cmd_str = f"{nodeGroupObj.org.name} cmd-{nodeGroupObj.num_ps_cmd}: {ps_cmd} {username if username is not None else ''}"
     return psCmdResultObj,org_cmd_str
 
-def process_Update_cmd(clusterObj, username, deploy_values, expire_time):
+def process_Update_cmd(nodeGroupObj, username, deploy_values, expire_time):
     global MIN_HRS_TO_LIVE_TO_START
     st = datetime.now(timezone.utc)
-    psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj=clusterObj,ps_cmd='Update')
-    LOG.info(f"STARTED {org_cmd_str} org.dnn:{clusterObj.cfg_asg.num} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} ")
+    psCmdResultObj,org_cmd_str = get_psCmdResultObj(nodeGroupObj=nodeGroupObj,ps_cmd='Update')
+    LOG.info(f"STARTED {org_cmd_str} org.dnn:{nodeGroupObj.cfg_asg.num} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} ")
     try:
         try:
-            LOG.info(f"Update {clusterObj.org.name}")
+            LOG.info(f"Update {nodeGroupObj.org.name}")
             psCmdResultObj.expiration = expire_time
             if psCmdResultObj.expiration is None or psCmdResultObj.expiration > datetime.now(timezone.utc):
-                cost_accounting(clusterObj) ## update DDT to check for broke orgs
-                LOG.info(f"Update {clusterObj.org.name} test times min_ddt:{clusterObj.min_ddt} max_ddt:{clusterObj.max_ddt} now:{datetime.now(timezone.utc)} MIN_HRS_TO_LIVE_TO_START:{timedelta(hours=MIN_HRS_TO_LIVE_TO_START)}")
-                if (clusterObj.max_ddt - datetime.now(timezone.utc)) < timedelta(hours=MIN_HRS_TO_LIVE_TO_START):
-                    emsg = f"cluster:{clusterObj.org.name} Raise LowBalanceError ddt:{clusterObj.max_ddt.strftime(FMT)}"
+                cost_accounting(nodeGroupObj) ## update DDT to check for broke orgs
+                LOG.info(f"Update {nodeGroupObj.org.name} test times min_ddt:{nodeGroupObj.min_ddt} max_ddt:{nodeGroupObj.max_ddt} now:{datetime.now(timezone.utc)} MIN_HRS_TO_LIVE_TO_START:{timedelta(hours=MIN_HRS_TO_LIVE_TO_START)}")
+                if (nodeGroupObj.max_ddt - datetime.now(timezone.utc)) < timedelta(hours=MIN_HRS_TO_LIVE_TO_START):
+                    emsg = f"cluster:{nodeGroupObj.org.name} Raise LowBalanceError ddt:{nodeGroupObj.max_ddt.strftime(FMT)}"
                     LOG.warning(emsg)
                     raise LowBalanceError(message=emsg)
             # add username to label being displayed 
@@ -1369,13 +1369,13 @@ def process_Update_cmd(clusterObj, username, deploy_values, expire_time):
                     LOG.info("Setting num_nodes_to_use to zero (i.e. deploy load balancer and monitor only)")
                 rsp_gen = stub.Update(
                     ps_server_pb2.UpdateRequest(
-                        name    = clusterObj.org.name,
+                        name    = nodeGroupObj.org.name,
                         min_nodes   = int(deploy_values['min_node_cap']),
                         max_nodes   = int(deploy_values['max_node_cap']),
                         num_nodes   = int(deploy_values['desired_num_nodes']),
                         now=datetime.now(timezone.utc).strftime(FMT)),
                         timeout=timeout)
-                process_rsp_generator(  clusterObj=clusterObj,
+                process_rsp_generator(  nodeGroupObj=nodeGroupObj,
                                         ps_cmd='Update', 
                                         rsp_gen=rsp_gen, 
                                         psCmdResultObj=psCmdResultObj, 
@@ -1383,7 +1383,7 @@ def process_Update_cmd(clusterObj, username, deploy_values, expire_time):
                                         deploy_values=deploy_values, 
                                         expire_time=expire_time)
         except LowBalanceError as e:
-            error_msg = f"{org_cmd_str} Low Balance Error: The account balance ({str(clusterObj.balance)}) of this organization is too low.The auto-shutdown time is {str(clusterObj.min_ddt)}  Check with the support team for assistance. Can NOT deploy with less than 8 hrs left until automatic shutdown"
+            error_msg = f"{org_cmd_str} Low Balance Error: The account balance ({str(nodeGroupObj.balance)}) of this organization is too low.The auto-shutdown time is {str(nodeGroupObj.min_ddt)}  Check with the support team for assistance. Can NOT deploy with less than 8 hrs left until automatic shutdown"
             LOG.warning(error_msg)
             psCmdResultObj.error = error_msg
             psCmdResultObj.save()
@@ -1395,34 +1395,34 @@ def process_Update_cmd(clusterObj, username, deploy_values, expire_time):
             raise e
         else:
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- Update {clusterObj.org.name}"
+            psCmdResultObj.ps_cmd_summary_label = f" --- Update {nodeGroupObj.org.name}"
             psCmdResultObj.ps_cmd_summary_label += f" {username}"
             psCmdResultObj.save()
             raise ProvisionCmdError(f"An error occurred during command processing. {error_msg}")
     finally:
-        long_str=f"{org_cmd_str} org.dnn:{clusterObj.cfg_asg.num} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} "
-        ps_cmd_cleanup(clusterObj,st,long_str)
+        long_str=f"{org_cmd_str} org.dnn:{nodeGroupObj.cfg_asg.num} {deploy_values if deploy_values is not None else 'no deploy values'} {expire_time.strftime(FMT) if expire_time is not None else 'no expire tm'} "
+        ps_cmd_cleanup(nodeGroupObj,st,long_str)
         for handler in LOG.handlers:
             handler.flush()
 
-def process_Refresh_cmd(clusterObj, username=None, owner_ps_cmd=None):
+def process_Refresh_cmd(nodeGroupObj, username=None, owner_ps_cmd=None):
     global MIN_HRS_TO_LIVE_TO_START
     st = datetime.now(timezone.utc)
     is_ad_hoc = owner_ps_cmd is not None
-    psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj=clusterObj,ps_cmd='Refresh', username=username, is_adhoc=is_ad_hoc)
+    psCmdResultObj,org_cmd_str = get_psCmdResultObj(nodeGroupObj=nodeGroupObj,ps_cmd='Refresh', username=username, is_adhoc=is_ad_hoc)
     LOG.info(f"STARTED {org_cmd_str}")
     try:
         # need to update
         with ps_client.create_client_channel("control") as channel:
             stub = ps_server_pb2_grpc.ControlStub(channel)
             timeout= int(os.environ.get("GRPC_TIMEOUT_SECS",900))
-            LOG.info(f"gRpc: Refresh {clusterObj.org.name} timeout:{timeout}")
+            LOG.info(f"gRpc: Refresh {nodeGroupObj.org.name} timeout:{timeout}")
             rsp_gen = stub.Refresh(
                 ps_server_pb2.RefreshRequest(
-                    name=clusterObj.org.name,
+                    name=nodeGroupObj.org.name,
                     now=datetime.now(timezone.utc).strftime(FMT)),
                     timeout=timeout)
-            process_rsp_generator(clusterObj=clusterObj, 
+            process_rsp_generator(nodeGroupObj=nodeGroupObj, 
                                   ps_cmd='Refresh', 
                                   rsp_gen=rsp_gen, 
                                   psCmdResultObj=psCmdResultObj, 
@@ -1434,7 +1434,7 @@ def process_Refresh_cmd(clusterObj, username=None, owner_ps_cmd=None):
             raise e
         else:
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- 'Refresh' {clusterObj.org.name}"
+            psCmdResultObj.ps_cmd_summary_label = f" --- 'Refresh' {nodeGroupObj.org.name}"
             if username is not None:
                 psCmdResultObj.ps_cmd_summary_label += f" {username}"
             psCmdResultObj.save()
@@ -1442,27 +1442,27 @@ def process_Refresh_cmd(clusterObj, username=None, owner_ps_cmd=None):
     finally:
         if owner_ps_cmd is not None:
             OwnerPSCmd.objects.get(id=owner_ps_cmd.id).delete()
-        ps_cmd_cleanup(clusterObj,st,org_cmd_str)
+        ps_cmd_cleanup(nodeGroupObj,st,org_cmd_str)
         for handler in LOG.handlers:
             handler.flush()
 
-def process_Destroy_cmd(clusterObj, username=None, owner_ps_cmd=None):
+def process_Destroy_cmd(nodeGroupObj, username=None, owner_ps_cmd=None):
     global MIN_HRS_TO_LIVE_TO_START
     st = datetime.now(timezone.utc)
     is_ad_hoc = owner_ps_cmd is not None
-    psCmdResultObj,org_cmd_str = get_psCmdResultObj(clusterObj=clusterObj,ps_cmd='Destroy', username=username, is_adhoc=is_ad_hoc)
+    psCmdResultObj,org_cmd_str = get_psCmdResultObj(nodeGroupObj=nodeGroupObj,ps_cmd='Destroy', username=username, is_adhoc=is_ad_hoc)
     LOG.info(f"STARTED {org_cmd_str}")
     try:
         with ps_client.create_client_channel("control") as channel:
             stub = ps_server_pb2_grpc.ControlStub(channel)
             timeout= int(os.environ.get("GRPC_TIMEOUT_SECS",900))
-            LOG.info(f"gRpc: 'Destroy {clusterObj.org.name} timeout:{timeout}")
+            LOG.info(f"gRpc: 'Destroy {nodeGroupObj.org.name} timeout:{timeout}")
             rsp_gen = stub.Destroy(
                 ps_server_pb2.DestroyRequest(
-                    name=clusterObj.org.name,
+                    name=nodeGroupObj.org.name,
                     now=datetime.now(timezone.utc).strftime(FMT)),
                     timeout=timeout)
-            process_rsp_generator(  clusterObj=clusterObj,
+            process_rsp_generator(  nodeGroupObj=nodeGroupObj,
                                     ps_cmd='Destroy',
                                     rsp_gen=rsp_gen, 
                                     psCmdResultObj=psCmdResultObj,
@@ -1474,7 +1474,7 @@ def process_Destroy_cmd(clusterObj, username=None, owner_ps_cmd=None):
             raise e
         else:
             psCmdResultObj.error = 'Server Error'
-            psCmdResultObj.ps_cmd_summary_label = f" --- Destroy {clusterObj.org.name}"
+            psCmdResultObj.ps_cmd_summary_label = f" --- Destroy {nodeGroupObj.org.name}"
             if username is not None:
                 psCmdResultObj.ps_cmd_summary_label += f" {username}"
             psCmdResultObj.save()
@@ -1483,27 +1483,27 @@ def process_Destroy_cmd(clusterObj, username=None, owner_ps_cmd=None):
         psCmdResultObj.save()
         if owner_ps_cmd is not None:
             OwnerPSCmd.objects.get(id=owner_ps_cmd.id).delete()
-        ps_cmd_cleanup(clusterObj,st,org_cmd_str)
+        ps_cmd_cleanup(nodeGroupObj,st,org_cmd_str)
         for handler in LOG.handlers:
             handler.flush()
 
 
-def process_owner_ps_cmd(clusterObj,owner_ps_cmd):
+def process_owner_ps_cmd(nodeGroupObj,owner_ps_cmd):
     try:
         # This is a synchronous blocking call
         if owner_ps_cmd.ps_cmd == "Refresh":
-            process_Refresh_cmd(clusterObj=clusterObj,
+            process_Refresh_cmd(nodeGroupObj=nodeGroupObj,
                                 username=owner_ps_cmd.user.username,
                                 owner_ps_cmd=owner_ps_cmd)
         elif owner_ps_cmd.ps_cmd == "Destroy":
-            process_Destroy_cmd(clusterObj=clusterObj,
+            process_Destroy_cmd(nodeGroupObj=nodeGroupObj,
                                 username=owner_ps_cmd.user.username,
                                 owner_ps_cmd=owner_ps_cmd)
         else:
             LOG.error(f"ERROR: process_owner_ps_cmd: unexpected ps_cmd:{owner_ps_cmd.ps_cmd}")
-        LOG.info(f"DONE processing :{owner_ps_cmd.ps_cmd} {owner_ps_cmd.org} for {owner_ps_cmd.user.username} with {owner_ps_cmd.deploy_values} num_owner_ps_cmd:{clusterObj.num_owner_ps_cmd} id:{clusterObj.id}")
+        LOG.info(f"DONE processing :{owner_ps_cmd.ps_cmd} {owner_ps_cmd.org} for {owner_ps_cmd.user.username} with {owner_ps_cmd.deploy_values} num_owner_ps_cmd:{nodeGroupObj.num_owner_ps_cmd} id:{nodeGroupObj.id}")
     except Exception as e:
-        LOG.exception(f"ERROR processing OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {clusterObj.org.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
+        LOG.exception(f"ERROR processing OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {nodeGroupObj.org.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
         LOG.info(f"sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
         sleep(COOLOFF_SECS)
     try:
@@ -1513,29 +1513,29 @@ def process_owner_ps_cmd(clusterObj,owner_ps_cmd):
     except OwnerPSCmd.DoesNotExist:
         pass # normally it's deleted inside process_provision_cmd
     except Exception as e:
-        LOG.exception(f"ERROR deleting processed OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {clusterObj.org.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
-        clusterObj.provisioning_suspended = True
-        clusterObj.save(update_fields=['provisioning_suspended'])
+        LOG.exception(f"ERROR deleting processed OwnerPSCmd id:{owner_ps_cmd.id} {owner_ps_cmd.ps_cmd} {nodeGroupObj.org.name} {owner_ps_cmd.user.username} {owner_ps_cmd.deploy_values} Exception:")
+        nodeGroupObj.provisioning_suspended = True
+        nodeGroupObj.save(update_fields=['provisioning_suspended'])
 
-def process_owner_ps_cmds_table(clusterObj):
+def process_owner_ps_cmds_table(nodeGroupObj):
     '''
     This function is called when a privileged user issues an ad-hoc Refresh or Delete command
     '''
-    env_ready,setup_occurred = check_provision_env_ready(clusterObj)
+    env_ready,setup_occurred = check_provision_env_ready(nodeGroupObj)
     num_cmds_processed = 0
     if env_ready:
-        qs = OwnerPSCmd.objects.filter(cluster=clusterObj)
+        qs = OwnerPSCmd.objects.filter(cluster=nodeGroupObj)
         #LOG.info(f"Enter with qs.count():{qs.count()}")
         for owner_ps_cmd in qs:
-            process_owner_ps_cmd(clusterObj,owner_ps_cmd)
+            process_owner_ps_cmd(nodeGroupObj,owner_ps_cmd)
             num_cmds_processed += 1
-            clusterObj.num_owner_ps_cmd = clusterObj.num_owner_ps_cmd + 1
-            clusterObj.save(update_fields=['num_owner_ps_cmd'])
-    qs = OwnerPSCmd.objects.filter(cluster=clusterObj)
+            nodeGroupObj.num_owner_ps_cmd = nodeGroupObj.num_owner_ps_cmd + 1
+            nodeGroupObj.save(update_fields=['num_owner_ps_cmd'])
+    qs = OwnerPSCmd.objects.filter(cluster=nodeGroupObj)
     #LOG.info(f"Exit with qs.count():{qs.count()}")
     return (qs.count()>0),setup_occurred,num_cmds_processed
 
-def  process_prov_sys_tbls(clusterObj):
+def  process_prov_sys_tbls(nodeGroupObj):
     '''
     This will empty the owner ps cmds table (OwnerPSCmd)
     then process the next org num node request 
@@ -1544,40 +1544,40 @@ def  process_prov_sys_tbls(clusterObj):
     from this table
     '''
     try:
-        start_cmd_cnt = clusterObj.num_ps_cmd
-        #LOG.info(f"org:{clusterObj.org.name} num_ps_cmd:{num_ps_cmd} num_onn:{num_onn}")
+        start_cmd_cnt = nodeGroupObj.num_ps_cmd
+        #LOG.info(f"org:{nodeGroupObj.org.name} num_ps_cmd:{num_ps_cmd} num_onn:{num_onn}")
         start_time = time.time() 
         # during deployments multiple versions of ps-web are running
-        with advisory_lock(clusterObj.org.name) as acquired:
+        with advisory_lock(nodeGroupObj.org.name) as acquired:
             end_time = time.time()  # record the ending time
             wait_time = end_time - start_time  # calculate the waiting time
             if wait_time > 3:  # only valid 
-                LOG.warning(f'Waited {wait_time} seconds to acquire lock for {clusterObj.org.name}')
+                LOG.warning(f'Waited {wait_time} seconds to acquire lock for {nodeGroupObj.org.name}')
             has_more_ps_cmds = True
             setup_occurred = False
             num_cmds_processed = 0
             while has_more_ps_cmds:
-                has_more_ps_cmds,setup_occurred_this_time,num_cmds_processed_this_time = process_owner_ps_cmds_table(clusterObj)
+                has_more_ps_cmds,setup_occurred_this_time,num_cmds_processed_this_time = process_owner_ps_cmds_table(nodeGroupObj)
                 setup_occurred = setup_occurred or setup_occurred_this_time
                 num_cmds_processed += num_cmds_processed_this_time
             # check if at least one API called and/or cnn expired and is not processed yet
-            #LOG.info(f"clusterObj:{clusterObj.org.name} {NodeGroup.objects.count()} {clusterObj.org.id}")
-            process_num_node_table(clusterObj,(num_cmds_processed==0 and setup_occurred))
+            #LOG.info(f"nodeGroupObj:{nodeGroupObj.org.name} {NodeGroup.objects.count()} {nodeGroupObj.org.id}")
+            process_num_node_table(nodeGroupObj,(num_cmds_processed==0 and setup_occurred))
     except Exception as e:
-        LOG.exception(f'Exception caught for {clusterObj.org.name}')
+        LOG.exception(f'Exception caught for {nodeGroupObj.org.name}')
         LOG.info(f"sleeping... {COOLOFF_SECS} seconds give terraform time to clean up")
         sleep(COOLOFF_SECS)
-    return (clusterObj.num_ps_cmd == start_cmd_cnt) # task is idle if no new commands were processed 
+    return (nodeGroupObj.num_ps_cmd == start_cmd_cnt) # task is idle if no new commands were processed 
 
-def loop_iter(clusterObj,loop_count):
+def loop_iter(nodeGroupObj,loop_count):
     '''
     This is called from the main loop.
     The process_prov_sys_tbls function can block when processing ps_cmds
     so the timing of ~2hz is only when it is idle.
     '''
-    #LOG.info(f"BEFORE {'{:>10}'.format(loop_count)} {clusterObj.org.name} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn}")
-    clusterObj.refresh_from_db()
-    is_idle = process_prov_sys_tbls(clusterObj)
+    #LOG.info(f"BEFORE {'{:>10}'.format(loop_count)} {nodeGroupObj.org.name} ps:{nodeGroupObj.num_ps_cmd} ops:{nodeGroupObj.num_owner_ps_cmd} cnn:{nodeGroupObj.num_onn}")
+    nodeGroupObj.refresh_from_db()
+    is_idle = process_prov_sys_tbls(nodeGroupObj)
     if is_idle:
         sleep(0.5) # ~2hz when idle
     #
@@ -1585,12 +1585,12 @@ def loop_iter(clusterObj,loop_count):
     # but keeps relevant info for diagnostics
     #
     if ((loop_count % 20) == 0): # about once every ten seconds OR 2 times a second * 10 seconds
-        clusterObj.loop_count = loop_count
-        clusterObj.save(update_fields=['loop_count'])
+        nodeGroupObj.loop_count = loop_count
+        nodeGroupObj.save(update_fields=['loop_count'])
     if ((loop_count % 7200) == 0): # about once every hour OR 2 times a second * 3600 seconds in an hour = 18000
-        LOG.info(f"{clusterObj.org.name} loop_count:{loop_count} clusterObj.loop_count:{clusterObj.loop_count} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn}")
+        LOG.info(f"{nodeGroupObj.org.name} loop_count:{loop_count} nodeGroupObj.loop_count:{nodeGroupObj.loop_count} ps:{nodeGroupObj.num_ps_cmd} ops:{nodeGroupObj.num_owner_ps_cmd} cnn:{nodeGroupObj.num_onn}")
     loop_count=loop_count+1
-    #LOG.info(f"AFTER  {'{:>10}'.format(loop_count)} {clusterObj.org.name} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn}")
+    #LOG.info(f"AFTER  {'{:>10}'.format(loop_count)} {nodeGroupObj.org.name} ps:{nodeGroupObj.num_ps_cmd} ops:{nodeGroupObj.num_owner_ps_cmd} cnn:{nodeGroupObj.num_onn}")
     return is_idle,loop_count
 
 def purge_old_PsCmdResultsForOrg(this_org):
@@ -1615,10 +1615,10 @@ def hourly_processing(self):
         perform_cost_accounting_for_all_clusters() # updates forecasts
         reconcile_all_orgs() # computes balance and FYTD cost
         # Now find all Orgs that ran out of funds (i.e. the are Broke)
-        for clusterObj in find_broke_clusters():
-            owner_ps_cmd = OwnerPSCmd.objects.create(user=clusterObj.org.owner, cluster=clusterObj, ps_cmd='Destroy', create_time=datetime.now(timezone.utc))
+        for nodeGroupObj in find_broke_clusters():
+            owner_ps_cmd = OwnerPSCmd.objects.create(user=nodeGroupObj.org.owner, cluster=nodeGroupObj, ps_cmd='Destroy', create_time=datetime.now(timezone.utc))
             owner_ps_cmd.save()
-            LOG.info(f"Destroy {clusterObj.org.name} queued for processing because it ran out of funds")
+            LOG.info(f"Destroy {nodeGroupObj.org.name} queued for processing because it ran out of funds")
         LOG.info(f"hourly_processing {self.request.id} finished")
         return True
     except Exception as e:
@@ -1641,26 +1641,26 @@ def forever_loop_main_task(self,name,loop_count):
     '''
     This is the main loop for each org. 
     '''
-    clusterObj = OrgAccount.objects.get(name=name)
+    nodeGroupObj = OrgAccount.objects.get(name=name)
     result = True
     task_idle = True
     try:
-        LOG.info(f"forever_loop_main_task {self.request.id} STARTED for {clusterObj.org.name}")
+        LOG.info(f"forever_loop_main_task {self.request.id} STARTED for {nodeGroupObj.org.name}")
         while task_idle and redis_interface.server_is_up() and not get_PROVISIONING_DISABLED():
-            task_idle, loop_count = loop_iter(clusterObj,loop_count)
+            task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
     except Exception as e:
-        LOG.exception(f'forever_loop_main_task - Exception caught while processing:{clusterObj.org.name}')
+        LOG.exception(f'forever_loop_main_task - Exception caught while processing:{nodeGroupObj.org.name}')
         sleep(5) # wait 5 seconds before trying again
         result = False
     #run again if  we have a redis connection and not disabled
     if redis_interface is not None and redis_interface.server_is_up():
         if get_PROVISIONING_DISABLED() == False: 
             sleep(1)
-            LOG.info(f" forever_loop_main_task {self.request.id} RE-STARTED for {clusterObj.org.name} after Exception or PS_CMD because get_PROVISIONING_DISABLED is False!")
-            forever_loop_main_task.apply_async((clusterObj.name,clusterObj.loop_count),queue=get_cluster_queue_name(clusterObj))
+            LOG.info(f" forever_loop_main_task {self.request.id} RE-STARTED for {nodeGroupObj.org.name} after Exception or PS_CMD because get_PROVISIONING_DISABLED is False!")
+            forever_loop_main_task.apply_async((nodeGroupObj.name,nodeGroupObj.loop_count),queue=get_node_group_queue_name(nodeGroupObj))
         else:
-            LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {clusterObj.org.name} because PROVISIONING_DISABLED is True!")
+            LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {nodeGroupObj.org.name} because PROVISIONING_DISABLED is True!")
     else:
-        LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {clusterObj.org.name} because we cannot connect to redis!")
-    LOG.info(f"forever_loop_main_task {self.request.id} FINISHED for {clusterObj.org.name} with result:{result} @ loop_count:{loop_count}")
+        LOG.critical(f"forever_loop_main_task NOT RE-STARTED for {nodeGroupObj.org.name} because we cannot connect to redis!")
+    LOG.info(f"forever_loop_main_task {self.request.id} FINISHED for {nodeGroupObj.org.name} with result:{result} @ loop_count:{loop_count}")
     return result

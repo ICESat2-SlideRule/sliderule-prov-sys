@@ -154,6 +154,8 @@
 <script src="//code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
     <script>
     $(document).ready(function () {
+        var myModal = new bootstrap.Modal(document.getElementById('nodeGroupModal'));
+        myModal.show();
         var chart = null;
         const br_field = document.querySelector('#br-field');
         var tselected = $("#type").find(":selected").text();

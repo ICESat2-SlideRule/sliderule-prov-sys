@@ -7,7 +7,7 @@ import os
 import pathlib
 from importlib import import_module
 from datetime import datetime, timezone, timedelta
-from users.tests.utilities_for_unit_tests import get_test_org,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,random_test_user,verify_user,process_onn_api,process_cluster_configure,log_CNN,create_active_membership,verify_api_user_makes_onn_ttl,get_test_compute_cluster
+from users.tests.utilities_for_unit_tests import get_test_org,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,random_test_user,verify_user,process_onn_api,process_node_group_configure,log_CNN,create_active_membership,verify_api_user_makes_onn_ttl,get_test_compute_cluster
 from users.tasks import loop_iter
 from users.models import OwnerPSCmd,ClusterNumNode,OrgAccount,PsCmdResult,NodeGroup
 from django.urls import reverse
@@ -86,7 +86,7 @@ def test_adding_an_num_node(caplog,client,mock_email_backend,initialize_test_env
         
         logger.info(f"will now add cnn by post of submit_value add_onn")
         form_prefix = 'add_onn-'
-        url = reverse('org-manage-cluster',args=[get_test_org().id,])
+        url = reverse('node-group-mange',args=[get_test_org().id,])
         # setup necessary form data
         ttl_to_test = 20
         form_data = {
@@ -125,7 +125,7 @@ def test_num_node_form_invalid_ttl_too_low(caplog,client,mock_email_backend,init
         'form_submit': 'add_onn',
     }
     # get the url
-    url = reverse('org-manage-cluster', args=[get_test_org().id])
+    url = reverse('node-group-mange', args=[get_test_org().id])
     # send the POST request
     response = client.post(url, form_data)
     # assert the form was successful
@@ -147,7 +147,7 @@ def test_num_node_form_invalid_ttl_too_high(caplog,client,mock_email_backend,ini
         'form_submit': 'add_onn',
     }
     # get the url
-    url = reverse('org-manage-cluster', args=[get_test_org().id])
+    url = reverse('node-group-mange', args=[get_test_org().id])
     # send the POST request
     response = client.post(url, form_data)
     # assert the form was successful
@@ -164,7 +164,7 @@ def test_reg_user_access_negative_test(caplog,client,mock_email_backend,initiali
     assert not user.groups.filter(name='PS_Developer').exists()
     assert get_test_org().owner != user
     # get the url
-    url = reverse('org-manage-cluster', args=[get_test_org().id])
+    url = reverse('node-group-mange', args=[get_test_org().id])
     # send the POST request
     response = client.get(url)
     assert response.status_code == 401
@@ -175,9 +175,9 @@ def test_reg_user_access_negative_test(caplog,client,mock_email_backend,initiali
 def test_org_account_cfg(caplog,client,mock_email_backend,initialize_test_environ):
     assert OrgAccount.objects.count() == 1
     
-    clusterObj = get_test_compute_cluster()
-    assert(not clusterObj.is_public) 
-    assert(clusterObj.version == 'latest') 
+    nodeGroupObj = get_test_compute_cluster()
+    assert(not nodeGroupObj.is_public) 
+    assert(nodeGroupObj.version == 'latest') 
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
     
@@ -192,15 +192,15 @@ def test_org_account_cfg(caplog,client,mock_email_backend,initialize_test_enviro
         'provisioning_suspended': False,
     }
     # get the url
-    url = reverse('org-configure', args=[clusterObj.id])
+    url = reverse('org-configure', args=[nodeGroupObj.id])
     # send the POST request
     response = client.post(url, data=form_data)
     # assert the form was successful
     # refresh the OrgAccount object
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     assert response.status_code == 200 or response.status_code == 302
-    assert(clusterObj.is_public) 
-    assert(clusterObj.version == 'v3') 
+    assert(nodeGroupObj.is_public) 
+    assert(nodeGroupObj.version == 'v3') 
 
 #@pytest.mark.dev
 @pytest.mark.django_db
@@ -208,9 +208,9 @@ def test_org_account_cfg(caplog,client,mock_email_backend,initialize_test_enviro
 def test_org_destroy_cluster_only_one(caplog,client,mock_email_backend,initialize_test_environ):
     assert OrgAccount.objects.count() == 1
     
-    clusterObj = get_test_compute_cluster()
-    assert(not clusterObj.is_public) # fixture default
-    assert(clusterObj.version == 'latest')  # fixture default
+    nodeGroupObj = get_test_compute_cluster()
+    assert(not nodeGroupObj.is_public) # fixture default
+    assert(nodeGroupObj.version == 'latest')  # fixture default
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
    
@@ -219,16 +219,16 @@ def test_org_destroy_cluster_only_one(caplog,client,mock_email_backend,initializ
     # send the POST request
     # Test that only one gets queued no matter how many times you try
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
 
 #@pytest.mark.dev
@@ -237,9 +237,9 @@ def test_org_destroy_cluster_only_one(caplog,client,mock_email_backend,initializ
 def test_org_refresh_cluster_only_one(caplog,client,mock_email_backend,initialize_test_environ):
     assert OrgAccount.objects.count() == 1
     
-    clusterObj = get_test_compute_cluster()
-    assert(not clusterObj.is_public) 
-    assert(clusterObj.version == 'latest') 
+    nodeGroupObj = get_test_compute_cluster()
+    assert(not nodeGroupObj.is_public) 
+    assert(nodeGroupObj.version == 'latest') 
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
    
@@ -249,16 +249,16 @@ def test_org_refresh_cluster_only_one(caplog,client,mock_email_backend,initializ
     # Test that only one gets queued no matter how many times you try
 
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
     response = client.post(url)
-    assert response.status_code in (200, 302) # redirects to org-manage-cluster # redirects to org-manage-cluster
+    assert response.status_code in (200, 302) # redirects to node-group-mange # redirects to node-group-mange
     assert OwnerPSCmd.objects.count() == 1    
 
 #@pytest.mark.dev
@@ -268,11 +268,11 @@ def test_org_refresh_cluster_only_one(caplog,client,mock_email_backend,initializ
 def test_change_version_with_user_view(setup_logging, client,initialize_test_environ):
     logger = setup_logging
     
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
-    assert(clusterObj.version == clusterObj.cur_version) # ensure initialization is correct 
-    initial_version = clusterObj.version
-    initial_is_public = clusterObj.is_public
+    assert(nodeGroupObj.version == nodeGroupObj.cur_version) # ensure initialization is correct 
+    initial_version = nodeGroupObj.version
+    initial_is_public = nodeGroupObj.is_public
     if initial_version == 'latest':
         new_version = 'v3' 
     elif initial_version == 'v3':
@@ -287,11 +287,11 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
-    assert clusterObj.num_setup_cmd == 0
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 0
-    assert clusterObj.num_ps_cmd == 0
-    assert clusterObj.num_onn == 0
+    assert nodeGroupObj.num_setup_cmd == 0
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
 
     # setup necessary form data
     form_data = {
@@ -304,8 +304,8 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
         'provisioning_suspended': False,
     }
 
-    loop_count = process_cluster_configure( client,
-                                            clusterObj,
+    loop_count = process_node_group_configure( client,
+                                            nodeGroupObj,
                                             new_time=datetime.now(timezone.utc),
                                             view_name='org-configure',
                                             url_args=[org_account_id],
@@ -317,22 +317,22 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
 
     # assert the form was successful
     # refresh the OrgAccount object
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == initial_is_public) 
-    assert(clusterObj.version == initial_version) 
-    assert clusterObj.num_setup_cmd == 1
-    assert clusterObj.num_setup_cmd_successful == 1
-    assert clusterObj.num_ps_cmd_successful == 2
-    assert clusterObj.num_ps_cmd == 2
-    assert clusterObj.num_onn == 1
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 3
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == initial_is_public) 
+    assert(nodeGroupObj.version == initial_version) 
+    assert nodeGroupObj.num_setup_cmd == 1
+    assert nodeGroupObj.num_setup_cmd_successful == 1
+    assert nodeGroupObj.num_ps_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd == 2
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 3
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
 
 
     assert PsCmdResult.objects.count() == 2 # SetUp - Refresh 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -347,7 +347,7 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -357,7 +357,7 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
                                 expected_status='QUEUED')
 
     assert PsCmdResult.objects.count() == 3 # SetUp - Update - Update
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -375,7 +375,7 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
         'destroy_when_no_nodes': True,
         'provisioning_suspended': False,
     }
-    loop_count = process_cluster_configure(client,
+    loop_count = process_node_group_configure(client,
                                         orgAccountObj,
                                         new_time=datetime.now(timezone.utc),
                                         view_name='org-configure',
@@ -386,22 +386,22 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
                                         expected_change_ps_cmd=2 # SetUp - Refresh 
                                         ) 
 
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == initial_is_public) 
-    assert(clusterObj.version == new_version) 
-    assert clusterObj.num_setup_cmd == 2
-    assert clusterObj.num_setup_cmd_successful == 2
-    assert clusterObj.num_ps_cmd_successful == 5
-    assert clusterObj.num_ps_cmd == 5
-    assert clusterObj.num_onn == 2
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 10
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == initial_is_public) 
+    assert(nodeGroupObj.version == new_version) 
+    assert nodeGroupObj.num_setup_cmd == 2
+    assert nodeGroupObj.num_setup_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd_successful == 5
+    assert nodeGroupObj.num_ps_cmd == 5
+    assert nodeGroupObj.num_onn == 2
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 10
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
 
 
     assert PsCmdResult.objects.count() == 5 # SetUp - Refresh - Update - SetUp - Refresh 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -421,7 +421,7 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -430,10 +430,10 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
                                 expected_change_ps_cmd=0, # same desired_num_nodes so no change
                                 expected_status='QUEUED')
 
-    assert clusterObj.num_onn == 2
-    assert clusterObj.cfg_asg.num == 3 # no change
+    assert nodeGroupObj.num_onn == 2
+    assert nodeGroupObj.cfg_asg.num == 3 # no change
     assert PsCmdResult.objects.count() == 5 # NO CHANGE - SetUp - Update - Update - SetUp - Destroy - Update
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -453,7 +453,7 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -462,9 +462,9 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
                                 expected_change_ps_cmd=2, # different desired_num_nodes Destroy Update
                                 expected_org_account_num_cnn_change=1, # Destroy is inline with the Update
                                 expected_status='QUEUED')
-    assert clusterObj.num_onn == 3
+    assert nodeGroupObj.num_onn == 3
     assert PsCmdResult.objects.count() == 7 # SetUp - Refresh - Update - SetUp - Destroy - Update - Update
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -487,13 +487,13 @@ def test_change_version_with_user_view(setup_logging, client,initialize_test_env
 def test_change_is_public_with_user_view(setup_logging, client,initialize_test_environ):
     logger = setup_logging
     
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
-    assert(clusterObj.is_deployed == False)
-    assert(clusterObj.version == clusterObj.cur_version) # ensure initialization is correct 
-    initial_version = clusterObj.version
+    assert(nodeGroupObj.is_deployed == False)
+    assert(nodeGroupObj.version == nodeGroupObj.cur_version) # ensure initialization is correct 
+    initial_version = nodeGroupObj.version
     new_version = initial_version
-    initial_is_public = clusterObj.is_public
+    initial_is_public = nodeGroupObj.is_public
     if initial_is_public:
         new_is_public = False
     else:
@@ -506,11 +506,11 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
-    assert clusterObj.num_setup_cmd == 0
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 0
-    assert clusterObj.num_ps_cmd == 0
-    assert clusterObj.num_onn == 0
+    assert nodeGroupObj.num_setup_cmd == 0
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
 
     # setup necessary form data
     form_data = {
@@ -523,7 +523,7 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
         'provisioning_suspended': False,
     }
 
-    loop_count = process_cluster_configure(client,
+    loop_count = process_node_group_configure(client,
                                         orgAccountObj,
                                         new_time=datetime.now(timezone.utc),
                                         view_name='org-configure',
@@ -536,22 +536,22 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
 
     # assert the form was successful
     # refresh the OrgAccount object
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == initial_is_public)
-    assert(clusterObj.version == initial_version) 
-    assert clusterObj.num_setup_cmd == 1
-    assert clusterObj.num_setup_cmd_successful == 1
-    assert clusterObj.num_ps_cmd_successful == 2
-    assert clusterObj.num_ps_cmd == 2
-    assert clusterObj.num_onn == 1
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 3
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == initial_is_public)
+    assert(nodeGroupObj.version == initial_version) 
+    assert nodeGroupObj.num_setup_cmd == 1
+    assert nodeGroupObj.num_setup_cmd_successful == 1
+    assert nodeGroupObj.num_ps_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd == 2
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 3
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
 
 
     assert PsCmdResult.objects.count() == 2 # SetUp - Update (min_node_cap is 1)
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -566,7 +566,7 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -576,7 +576,7 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
                                 expected_status='QUEUED')
 
     assert PsCmdResult.objects.count() == 3 # SetUp - Update (to 1) - Update (to 3)
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -594,7 +594,7 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
         'destroy_when_no_nodes': True,
         'provisioning_suspended': False,
     }
-    loop_count = process_cluster_configure(client,
+    loop_count = process_node_group_configure(client,
                                         orgAccountObj,
                                         new_time=datetime.now(timezone.utc),
                                         view_name='org-configure',
@@ -605,22 +605,22 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
                                         expected_change_ps_cmd=2 # SetUp - Refresh
                                         ) 
 
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == new_is_public) 
-    assert(clusterObj.version == new_version) 
-    assert clusterObj.num_setup_cmd == 2
-    assert clusterObj.num_setup_cmd_successful == 2
-    assert clusterObj.num_ps_cmd_successful == 5
-    assert clusterObj.num_ps_cmd == 5
-    assert clusterObj.num_onn == 2
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 10
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == new_is_public) 
+    assert(nodeGroupObj.version == new_version) 
+    assert nodeGroupObj.num_setup_cmd == 2
+    assert nodeGroupObj.num_setup_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd_successful == 5
+    assert nodeGroupObj.num_ps_cmd == 5
+    assert nodeGroupObj.num_onn == 2
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 10
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
 
 
     assert PsCmdResult.objects.count() == 5 # SetUp - Refresh - Destroy - Update (to 3) - SetUp - Refresh 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -640,7 +640,7 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -649,12 +649,12 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
                                 expected_change_ps_cmd=0, # same desired_num_nodes so no change
                                 expected_status='QUEUED')
 
-    assert clusterObj.num_onn == 2
+    assert nodeGroupObj.num_onn == 2
 
-    assert clusterObj.cfg_asg.num == 3 # no change
+    assert nodeGroupObj.cfg_asg.num == 3 # no change
     assert PsCmdResult.objects.count() == 5
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -674,7 +674,7 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -683,9 +683,9 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
                                 expected_change_ps_cmd=2, # different Destroy Update
                                 expected_status='QUEUED',
                                 expected_org_account_num_cnn_change=1) # Destroy is inline so only 1
-    assert clusterObj.num_onn == 3
+    assert nodeGroupObj.num_onn == 3
     assert PsCmdResult.objects.count() == 7 # + Destroy Update (new desired_num_nodes)
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
@@ -702,24 +702,24 @@ def test_change_is_public_with_user_view(setup_logging, client,initialize_test_e
     logger.info(f"[6]:{psCmdResultObjs[6].ps_cmd_summary_label}")
     assert 'Update' in psCmdResultObjs[6].ps_cmd_summary_label
 
-    assert clusterObj.cfg_asg.num == 4    
+    assert nodeGroupObj.cfg_asg.num == 4    
 
 #@pytest.mark.dev
 @pytest.mark.django_db
 @pytest.mark.ps_server_stubbed
 def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_backend, initialize_test_environ, developer_TEST_USER):
     '''
-        This procedure will test logic add num nodes from the org-manage-cluster web page
+        This procedure will test logic add num nodes from the node-group-mange web page
     '''
     logger = setup_logging
     
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
-    assert(clusterObj.is_deployed == False)
-    assert(clusterObj.version == clusterObj.cur_version) # ensure initialization is correct 
-    initial_version = clusterObj.version
+    assert(nodeGroupObj.is_deployed == False)
+    assert(nodeGroupObj.version == nodeGroupObj.cur_version) # ensure initialization is correct 
+    initial_version = nodeGroupObj.version
     new_version = initial_version
-    initial_is_public = clusterObj.is_public
+    initial_is_public = nodeGroupObj.is_public
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
@@ -728,11 +728,11 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
-    assert clusterObj.num_setup_cmd == 0
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 0
-    assert clusterObj.num_ps_cmd == 0
-    assert clusterObj.num_onn == 0
+    assert nodeGroupObj.num_setup_cmd == 0
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
 
     # setup necessary form data
     form_data = {
@@ -745,7 +745,7 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
         'provisioning_suspended': False,
     }
 
-    loop_count = process_cluster_configure(client,
+    loop_count = process_node_group_configure(client,
                                         orgAccountObj,
                                         new_time=datetime.now(timezone.utc),
                                         view_name='org-configure',
@@ -757,20 +757,20 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
                                         )
     # assert the form was successful
     # refresh the OrgAccount object
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == initial_is_public) 
-    assert(clusterObj.version == initial_version) 
-    assert clusterObj.num_setup_cmd == 1
-    assert clusterObj.num_setup_cmd_successful == 1
-    assert clusterObj.num_ps_cmd_successful == 2
-    assert clusterObj.num_ps_cmd == 2
-    assert clusterObj.num_onn == 1
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 3
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == initial_is_public) 
+    assert(nodeGroupObj.version == initial_version) 
+    assert nodeGroupObj.num_setup_cmd == 1
+    assert nodeGroupObj.num_setup_cmd_successful == 1
+    assert nodeGroupObj.num_ps_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd == 2
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 3
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
     assert PsCmdResult.objects.count() == 2 # SetUp - Refresh 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -783,7 +783,7 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -807,7 +807,7 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -826,7 +826,7 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -841,17 +841,17 @@ def test_web_user_desired_num_nodes(caplog, setup_logging, client, mock_email_ba
 @pytest.mark.ps_server_stubbed
 def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_backend, initialize_test_environ, developer_TEST_USER):
     '''
-        This procedure will test logic clear num nodes from the org-manage-cluster web page
+        This procedure will test logic clear num nodes from the node-group-mange web page
     '''
     logger = setup_logging
     
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
-    assert(clusterObj.is_deployed == False)
-    assert(clusterObj.version == clusterObj.cur_version) # ensure initialization is correct 
-    initial_version = clusterObj.version
+    assert(nodeGroupObj.is_deployed == False)
+    assert(nodeGroupObj.version == nodeGroupObj.cur_version) # ensure initialization is correct 
+    initial_version = nodeGroupObj.version
     new_version = initial_version
-    initial_is_public = clusterObj.is_public
+    initial_is_public = nodeGroupObj.is_public
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
@@ -860,11 +860,11 @@ def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_back
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
-    assert clusterObj.num_setup_cmd == 0
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 0
-    assert clusterObj.num_ps_cmd == 0
-    assert clusterObj.num_onn == 0
+    assert nodeGroupObj.num_setup_cmd == 0
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
 
     # setup necessary form data
     form_data = {
@@ -877,7 +877,7 @@ def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_back
         'provisioning_suspended': False,
     }
 
-    loop_count = process_cluster_configure(client,
+    loop_count = process_node_group_configure(client,
                                         orgAccountObj,
                                         new_time=datetime.now(timezone.utc),
                                         view_name='org-configure',
@@ -889,20 +889,20 @@ def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_back
                                         )
     # assert the form was successful
     # refresh the OrgAccount object
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == initial_is_public) 
-    assert(clusterObj.version == initial_version) 
-    assert clusterObj.num_setup_cmd == 1
-    assert clusterObj.num_setup_cmd_successful == 1
-    assert clusterObj.num_ps_cmd_successful == 2
-    assert clusterObj.num_ps_cmd == 2
-    assert clusterObj.num_onn == 1
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 3
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == initial_is_public) 
+    assert(nodeGroupObj.version == initial_version) 
+    assert nodeGroupObj.num_setup_cmd == 1
+    assert nodeGroupObj.num_setup_cmd_successful == 1
+    assert nodeGroupObj.num_ps_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd == 2
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 3
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
     assert PsCmdResult.objects.count() == 2 # SetUp - Refresh 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -919,7 +919,7 @@ def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_back
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -941,7 +941,7 @@ def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_back
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -975,17 +975,17 @@ def test_web_user_clear_num_nodes(caplog, setup_logging, client, mock_email_back
 @pytest.mark.ps_server_stubbed
 def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, mock_email_backend, initialize_test_environ, developer_TEST_USER):
     '''
-        This procedure will test logic clear num nodes from the org-manage-cluster web page
+        This procedure will test logic clear num nodes from the node-group-mange web page
     '''
     logger = setup_logging
     
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
-    assert(clusterObj.is_deployed == False)
-    assert(clusterObj.version == clusterObj.cur_version) # ensure initialization is correct 
-    initial_version = clusterObj.version
+    assert(nodeGroupObj.is_deployed == False)
+    assert(nodeGroupObj.version == nodeGroupObj.cur_version) # ensure initialization is correct 
+    initial_version = nodeGroupObj.version
     new_version = initial_version
-    initial_is_public = clusterObj.is_public
+    initial_is_public = nodeGroupObj.is_public
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
@@ -994,11 +994,11 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
 
     assert(client.login(username=OWNER_USER, password=OWNER_PASSWORD))
 
-    assert clusterObj.num_setup_cmd == 0
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 0
-    assert clusterObj.num_ps_cmd == 0
-    assert clusterObj.num_onn == 0
+    assert nodeGroupObj.num_setup_cmd == 0
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
 
     # setup necessary form data
     form_data = {
@@ -1011,7 +1011,7 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
         'provisioning_suspended': False,
     }
 
-    loop_count = process_cluster_configure(client,
+    loop_count = process_node_group_configure(client,
                                         orgAccountObj,
                                         new_time=datetime.now(timezone.utc),
                                         view_name='org-configure',
@@ -1023,20 +1023,20 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
                                         )
     # assert the form was successful
     # refresh the OrgAccount object
-    clusterObj = get_test_compute_cluster()
-    assert(clusterObj.is_public == initial_is_public) 
-    assert(clusterObj.version == initial_version) 
-    assert clusterObj.num_setup_cmd == 1
-    assert clusterObj.num_setup_cmd_successful == 1
-    assert clusterObj.num_ps_cmd_successful == 2
-    assert clusterObj.num_ps_cmd == 2
-    assert clusterObj.num_onn == 1
-    assert clusterObj.cfg_asg.min == 1
-    assert clusterObj.cfg_asg.max == 3
-    assert clusterObj.allow_deploy_by_token == True
-    assert clusterObj.destroy_when_no_nodes == True
+    nodeGroupObj = get_test_compute_cluster()
+    assert(nodeGroupObj.is_public == initial_is_public) 
+    assert(nodeGroupObj.version == initial_version) 
+    assert nodeGroupObj.num_setup_cmd == 1
+    assert nodeGroupObj.num_setup_cmd_successful == 1
+    assert nodeGroupObj.num_ps_cmd_successful == 2
+    assert nodeGroupObj.num_ps_cmd == 2
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.cfg_asg.min == 1
+    assert nodeGroupObj.cfg_asg.max == 3
+    assert nodeGroupObj.allow_deploy_by_token == True
+    assert nodeGroupObj.destroy_when_no_nodes == True
     assert PsCmdResult.objects.count() == 2 # SetUp - Refresh 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Configure' in psCmdResultObjs[0].ps_cmd_summary_label # we use Configure (it's user friendly) but it's really SetUp)
     logger.info(f"[1]:{psCmdResultObjs[1].ps_cmd_summary_label}")
@@ -1053,7 +1053,7 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -1073,7 +1073,7 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
     loop_count,response = process_onn_api(client=client,
                                 orgAccountObj=orgAccountObj,
                                 new_time=datetime.now(timezone.utc),
-                                view_name='org-manage-cluster',
+                                view_name='node-group-mange',
                                 url_args=[orgAccountObj.id],
                                 access_token=None,
                                 data=form_data,
@@ -1097,8 +1097,8 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
                                     expected_change_ps_cmd=1) 
     log_CNN()
     assert ClusterNumNode.objects.count() == 3
-    clusterObj.refresh_from_db()
-    assert len(clusterObj.cnnro_ids) == 2
+    nodeGroupObj.refresh_from_db()
+    assert len(nodeGroupObj.cnnro_ids) == 2
 
 
     # Now negative test non owner user trying to remove entries
@@ -1109,8 +1109,8 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
     response = client.post(url,HTTP_ACCEPT='application/json')
     assert((response.status_code == 200) or (response.status_code == 302))
 
-    idle, loop_count = loop_iter(clusterObj,loop_count)
-    idle, loop_count = loop_iter(clusterObj,loop_count)
+    idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+    idle, loop_count = loop_iter(nodeGroupObj,loop_count)
 
     assert ClusterNumNode.objects.count() == 3 # non owner cannot clear
 
@@ -1124,8 +1124,8 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
     response = client.post(url,HTTP_ACCEPT='application/json')
     assert((response.status_code == 200) or (response.status_code == 302))
 
-    idle, loop_count = loop_iter(clusterObj,loop_count)
-    idle, loop_count = loop_iter(clusterObj,loop_count)
+    idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+    idle, loop_count = loop_iter(nodeGroupObj,loop_count)
 
     assert ClusterNumNode.objects.count() == 2
 
@@ -1135,8 +1135,8 @@ def test_web_user_clear_num_nodes_multiple_users(caplog, setup_logging, client, 
     logger.info(f"using url:{url}")
     response = client.post(url,HTTP_ACCEPT='application/json')
     assert((response.status_code == 200) or (response.status_code == 302))
-    idle, loop_count = loop_iter(clusterObj,loop_count)
-    idle, loop_count = loop_iter(clusterObj,loop_count)
+    idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+    idle, loop_count = loop_iter(nodeGroupObj,loop_count)
     assert ClusterNumNode.objects.count() == 0
-    clusterObj.refresh_from_db()
-    assert len(clusterObj.cnnro_ids) == 0
+    nodeGroupObj.refresh_from_db()
+    assert len(nodeGroupObj.cnnro_ids) == 0

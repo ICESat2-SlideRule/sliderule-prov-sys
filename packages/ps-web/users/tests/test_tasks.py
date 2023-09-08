@@ -21,7 +21,7 @@ from decimal import *
 from django.urls import reverse
 from users.tests.utilities_for_unit_tests import init_test_environ,get_test_org,get_test_compute_cluster,get_test_compute_cluster,OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,random_test_user,pytest_approx,the_TEST_USER,init_mock_ps_server
 from users.models import Membership,OwnerPSCmd,OrgAccount,ClusterNumNode,NodeGroup,PsCmdResult
-from users.forms import ClusterCfgForm
+from users.forms import NodeGroupCfgForm
 from users.tasks import update_burn_rates,purge_old_PsCmdResultsForOrg,process_num_node_table,process_owner_ps_cmds_table,process_Update_cmd,process_Destroy_cmd,process_Refresh_cmd,cost_accounting_cluster,check_provision_env_ready
 from time import sleep
 from django.contrib import messages
@@ -70,32 +70,32 @@ def test_update_burn_rates(tasks_module,initialize_test_environ):
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.cur_asg.num = 1
-    clusterObj.cur_asg.min = 0
-    clusterObj.cur_asg.max = 100
-    clusterObj.budget.balance = 100000.0 # test a large number
-    clusterObj.budget.monthly_allowance = 1000.0
-    clusterObj.budget.max__allowance = 100000.0
-    clusterObj.budget.save()
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.cur_asg.num = 1
+    nodeGroupObj.cur_asg.min = 0
+    nodeGroupObj.cur_asg.max = 100
+    nodeGroupObj.budget.balance = 100000.0 # test a large number
+    nodeGroupObj.budget.monthly_allowance = 1000.0
+    nodeGroupObj.budget.max__allowance = 100000.0
+    nodeGroupObj.budget.save()
 
     assert(orgAccountObj.name == TEST_ORG_NAME)
     init_mock_ps_server(name=TEST_ORG_NAME,num_nodes=1)
 
     assert(orgAccountObj.owner.username == OWNER_USER)
-    forecast_min_hrly, forecast_cur_hrly, forecast_max_hrly = update_burn_rates(clusterObj)
-    logger.info(f"{clusterObj.cfg_asg.min}/{clusterObj.cur_asg.num}/{clusterObj.cfg_asg.max}")
+    forecast_min_hrly, forecast_cur_hrly, forecast_max_hrly = update_burn_rates(nodeGroupObj)
+    logger.info(f"{nodeGroupObj.cfg_asg.min}/{nodeGroupObj.cur_asg.num}/{nodeGroupObj.cfg_asg.max}")
     logger.info(f"{forecast_min_hrly}/{forecast_cur_hrly}/{forecast_max_hrly}")
     assert(pytest_approx(forecast_min_hrly,0.0001))
     assert(pytest_approx(forecast_cur_hrly,0.379))
     assert(pytest_approx(forecast_max_hrly,2.413))
 
-    clusterObj.budget.balance = 100000.0 # test a large number
-    clusterObj.budget.monthly_allowance = 1000.0
-    clusterObj.budget.max__allowance = 100000.0
-    clusterObj.budget.save()
-    forecast_min_hrly, forecast_cur_hrly, forecast_max_hrly = update_burn_rates(clusterObj)
-    logger.info(f"{clusterObj.cfg_asg.min}/{clusterObj.cur_asg.num}/{clusterObj.cfg_asg.max}")
+    nodeGroupObj.budget.balance = 100000.0 # test a large number
+    nodeGroupObj.budget.monthly_allowance = 1000.0
+    nodeGroupObj.budget.max__allowance = 100000.0
+    nodeGroupObj.budget.save()
+    forecast_min_hrly, forecast_cur_hrly, forecast_max_hrly = update_burn_rates(nodeGroupObj)
+    logger.info(f"{nodeGroupObj.cfg_asg.min}/{nodeGroupObj.cur_asg.num}/{nodeGroupObj.cfg_asg.max}")
     logger.info(f"{forecast_min_hrly}/{forecast_cur_hrly}/{forecast_max_hrly}")
     assert False # TBD add checks here
 
@@ -109,7 +109,7 @@ def test_purge_old_PsCmdResultsForOrg(tasks_module,initialize_test_environ):
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     psCmdResultObj = PsCmdResult.objects.create(org=orgAccountObj,expiration=datetime.now(timezone.utc)+timedelta(days=1))
     psCmdResultObj = PsCmdResult.objects.create(org=orgAccountObj,expiration=datetime.now(timezone.utc)-timedelta(minutes=1))
 
@@ -132,25 +132,25 @@ def test_process_num_node_table_CNN_EMPTY_DESTROY(tasks_module,initialize_test_e
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.is_deployed = True
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = True
-    clusterObj.cfg_asg.min = 0
-    assert clusterObj.num_onn == 0
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = True
+    nodeGroupObj.cfg_asg.min = 0
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 0
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     process_num_node_table(orgAccountObj,False)
     orgAccountObj.refresh_from_db()
-    assert clusterObj.num_onn == 1
-    assert clusterObj.num_setup_cmd == 0
-    assert clusterObj.num_ps_cmd == 1 # Update
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 1
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.num_setup_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 1 # Update
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 1
     assert PsCmdResult.objects.count() == 1
     logger.info(f"PsCmdResult.objects.count()={PsCmdResult.objects.count()}")
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[1]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Destroy' in psCmdResultObjs[0].ps_cmd_summary_label
 
@@ -167,29 +167,29 @@ def test_process_num_node_table_CNN_EMPTY_UPDATE(tasks_module,initialize_test_en
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.is_deployed = True
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 1
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 1
     orgAccountObj.save()
-    logger.info(f"desired:{clusterObj.cfg_asg.num}")
-    assert clusterObj.cfg_asg.num == 0
-    assert clusterObj.num_onn == 0
+    logger.info(f"desired:{nodeGroupObj.cfg_asg.num}")
+    assert nodeGroupObj.cfg_asg.num == 0
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 0
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     process_num_node_table(orgAccountObj,False)
     orgAccountObj.refresh_from_db()
-    assert clusterObj.num_onn == 1
-    assert clusterObj.num_ps_cmd == 1 #  Update
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 1
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.num_ps_cmd == 1 #  Update
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 1
     assert PsCmdResult.objects.count() == 1
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"PsCmdResult.objects.count()={PsCmdResult.objects.count()}")
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Update' in psCmdResultObjs[0].ps_cmd_summary_label
-    assert clusterObj.cfg_asg.num == 1
+    assert nodeGroupObj.cfg_asg.num == 1
 #@pytest.mark.dev
 @pytest.mark.django_db
 @pytest.mark.ps_server_stubbed
@@ -202,24 +202,24 @@ def test_process_num_node_table_CNN_EMPTY_NOT_DEPLOYED(tasks_module,initialize_t
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.is_deployed = False
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 0
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.is_deployed = False
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 0
     orgAccountObj.save()
-    logger.info(f"desired:{clusterObj.cfg_asg.num}")
-    assert clusterObj.cfg_asg.num == 0
-    assert clusterObj.num_onn == 0
+    logger.info(f"desired:{nodeGroupObj.cfg_asg.num}")
+    assert nodeGroupObj.cfg_asg.num == 0
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 0
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     process_num_node_table(orgAccountObj,False)
     orgAccountObj.refresh_from_db()
-    assert clusterObj.num_onn == 0
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
-    assert clusterObj.cfg_asg.num == 0
+    assert nodeGroupObj.cfg_asg.num == 0
 
 #@pytest.mark.dev
 @pytest.mark.django_db
@@ -235,26 +235,26 @@ def test_process_num_node_table_CNN_EMPTY_SET_TO_MIN(tasks_module,initialize_tes
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.is_deployed = True
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
     orgAccountObj.save()
-    logger.info(f"desired:{clusterObj.cfg_asg.num}")
-    assert clusterObj.cfg_asg.num == 0
-    assert clusterObj.num_onn == 0
+    logger.info(f"desired:{nodeGroupObj.cfg_asg.num}")
+    assert nodeGroupObj.cfg_asg.num == 0
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 0
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     process_num_node_table(orgAccountObj,False)
     orgAccountObj.refresh_from_db()
-    assert clusterObj.num_onn == 1
-    assert clusterObj.num_ps_cmd == 1 #  Update
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 1
+    assert nodeGroupObj.num_onn == 1
+    assert nodeGroupObj.num_ps_cmd == 1 #  Update
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 1
     assert PsCmdResult.objects.count() == 1
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"PsCmdResult.objects.count()={PsCmdResult.objects.count()}")
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Update' in psCmdResultObjs[0].ps_cmd_summary_label
@@ -270,44 +270,44 @@ def test_process_num_node_table_CNN_NOT_EMPTY_CHANGE_VERSION(tasks_module,create
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    # clusterObj.is_deployed = True
-    # clusterObj.cur_version = 'v3'
-    # clusterObj.save()
-    logger.info(f"clusterObj.cur_version={clusterObj.cur_version} clusterObj.is_deployed={clusterObj.is_deployed}")
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
-    clusterObj.cfg_asg.num = 2
-    clusterObj.version = 'v3'
+    nodeGroupObj = get_test_compute_cluster()
+    # nodeGroupObj.is_deployed = True
+    # nodeGroupObj.cur_version = 'v3'
+    # nodeGroupObj.save()
+    logger.info(f"nodeGroupObj.cur_version={nodeGroupObj.cur_version} nodeGroupObj.is_deployed={nodeGroupObj.is_deployed}")
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.cfg_asg.num = 2
+    nodeGroupObj.version = 'v3'
     orgAccountObj.save()
     expire_date = datetime.now(timezone.utc)+timedelta(hours=1)
-    ClusterNumNode.objects.create(user=the_TEST_USER(),org=orgAccountObj, desired_num_nodes=clusterObj.cfg_asg.num+1,expiration=expire_date)
+    ClusterNumNode.objects.create(user=the_TEST_USER(),org=orgAccountObj, desired_num_nodes=nodeGroupObj.cfg_asg.num+1,expiration=expire_date)
 
-    logger.info(f"desired:{clusterObj.cfg_asg.num}")
-    assert clusterObj.cfg_asg.num == 2
-    assert clusterObj.num_onn == 0
+    logger.info(f"desired:{nodeGroupObj.cfg_asg.num}")
+    assert nodeGroupObj.cfg_asg.num == 2
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 1
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     
     process_num_node_table(orgAccountObj,False)
     orgAccountObj.refresh_from_db()
-    logger.info(f"orgAccountObj: num_onn={clusterObj.num_onn} num_ps_cmd={clusterObj.num_ps_cmd} desired_num_nodes={clusterObj.cfg_asg.num} cnt:{PsCmdResult.objects.count()}")
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    logger.info(f"orgAccountObj: num_onn={nodeGroupObj.num_onn} num_ps_cmd={nodeGroupObj.num_ps_cmd} desired_num_nodes={nodeGroupObj.cfg_asg.num} cnt:{PsCmdResult.objects.count()}")
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     assert PsCmdResult.objects.count() == 1
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
-    assert clusterObj.num_onn == 1 
+    assert nodeGroupObj.num_onn == 1 
     assert OwnerPSCmd.objects.count() == 0
-    assert clusterObj.num_setup_cmd == 0 # handled in fixture
-    assert clusterObj.num_ps_cmd == 1
-    assert clusterObj.num_setup_cmd_successful == 0
-    assert clusterObj.num_ps_cmd_successful == 1
+    assert nodeGroupObj.num_setup_cmd == 0 # handled in fixture
+    assert nodeGroupObj.num_ps_cmd == 1
+    assert nodeGroupObj.num_setup_cmd_successful == 0
+    assert nodeGroupObj.num_ps_cmd_successful == 1
     logger.info(f"PsCmdResult.objects.count()={PsCmdResult.objects.count()}")
     assert PsCmdResult.objects.count() == 1
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Update' in psCmdResultObjs[0].ps_cmd_summary_label
-    assert clusterObj.cfg_asg.num == 3 
+    assert nodeGroupObj.cfg_asg.num == 3 
 
 #@pytest.mark.dev
 @pytest.mark.django_db
@@ -320,38 +320,38 @@ def test_process_num_node_table_CNN_NOT_EMPTY_CHANGE_IS_PUBLIC(tasks_module,crea
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.is_deployed = True
-    clusterObj.cur_version = 'v3'
-    clusterObj.is_public = True
-    clusterObj.provision_env_ready = True
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
-    clusterObj.cfg_asg.num = 2
-    clusterObj.version = 'v3'
-    clusterObj.is_public = False
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.cur_version = 'v3'
+    nodeGroupObj.is_public = True
+    nodeGroupObj.provision_env_ready = True
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.cfg_asg.num = 2
+    nodeGroupObj.version = 'v3'
+    nodeGroupObj.is_public = False
     orgAccountObj.save()
     expire_date = datetime.now(timezone.utc)+timedelta(hours=1)
-    ClusterNumNode.objects.create(user=the_TEST_USER(),org=orgAccountObj, desired_num_nodes=clusterObj.cfg_asg.num+1,expiration=expire_date)
-    clusterObj.cnnro_ids = []
-    clusterObj.cnnro_ids.append(str(ClusterNumNode.objects.first().id))
-    logger.info(f"clusterObj.cnnro_ids:{clusterObj.cnnro_ids}")
-    clusterObj.save()
+    ClusterNumNode.objects.create(user=the_TEST_USER(),org=orgAccountObj, desired_num_nodes=nodeGroupObj.cfg_asg.num+1,expiration=expire_date)
+    nodeGroupObj.cnnro_ids = []
+    nodeGroupObj.cnnro_ids.append(str(ClusterNumNode.objects.first().id))
+    logger.info(f"nodeGroupObj.cnnro_ids:{nodeGroupObj.cnnro_ids}")
+    nodeGroupObj.save()
 
-    logger.info(f"desired:{clusterObj.cfg_asg.num}")
-    assert clusterObj.cfg_asg.num == 2
-    assert clusterObj.num_onn == 0
+    logger.info(f"desired:{nodeGroupObj.cfg_asg.num}")
+    assert nodeGroupObj.cfg_asg.num == 2
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 1
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     
     process_num_node_table(orgAccountObj,False)
 
     orgAccountObj.refresh_from_db()
-    assert clusterObj.num_onn == 0
+    assert nodeGroupObj.num_onn == 0
     assert OwnerPSCmd.objects.count() == 0
-    assert clusterObj.num_ps_cmd == 1
-    assert clusterObj.cfg_asg.num == 0 # destroyed
+    assert nodeGroupObj.num_ps_cmd == 1
+    assert nodeGroupObj.cfg_asg.num == 0 # destroyed
     assert PsCmdResult.objects.count() == 1
     psCmdResultObj = PsCmdResult.objects.first()
     assert 'Destroy' in psCmdResultObj.ps_cmd_summary_label
@@ -368,40 +368,40 @@ def test_process_num_node_table_CNN_NOT_EMPTY_UPDATE(tasks_module,create_TEST_US
     '''
 
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.is_deployed = True
-    clusterObj.cur_version = 'v3'
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
-    clusterObj.cfg_asg.num = 2
-    new_desire_num_nodes = clusterObj.cfg_asg.num+1
-    clusterObj.version = 'v3'
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.cur_version = 'v3'
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.cfg_asg.num = 2
+    new_desire_num_nodes = nodeGroupObj.cfg_asg.num+1
+    nodeGroupObj.version = 'v3'
     orgAccountObj.save()
     expire_date = datetime.now(timezone.utc)+timedelta(hours=1)
     ClusterNumNode.objects.create(user=the_TEST_USER(),org=orgAccountObj, desired_num_nodes=new_desire_num_nodes,expiration=expire_date)
 
-    logger.info(f"desired:{clusterObj.cfg_asg.num}")
-    assert clusterObj.cfg_asg.num == 2
-    assert clusterObj.num_onn == 0
+    logger.info(f"desired:{nodeGroupObj.cfg_asg.num}")
+    assert nodeGroupObj.cfg_asg.num == 2
+    assert nodeGroupObj.num_onn == 0
     assert ClusterNumNode.objects.count() == 1
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
     
     process_num_node_table(orgAccountObj,False)
 
     orgAccountObj.refresh_from_db()
-    assert clusterObj.num_onn == 1
+    assert nodeGroupObj.num_onn == 1
     assert OwnerPSCmd.objects.count() == 0 
-    assert clusterObj.num_ps_cmd == 1 # 
-    assert clusterObj.cfg_asg.num == new_desire_num_nodes
+    assert nodeGroupObj.num_ps_cmd == 1 # 
+    assert nodeGroupObj.cfg_asg.num == new_desire_num_nodes
     assert PsCmdResult.objects.count() == 1
     psCmdResultObj = PsCmdResult.objects.first()
     assert 'Update' in psCmdResultObj.ps_cmd_summary_label
     assert ClusterNumNode.objects.count() == 1 # until it expires
     cnn = ClusterNumNode.objects.first()
-    clusterObj.refresh_from_db()
-    assert str(cnn.id) in clusterObj.cnnro_ids
+    nodeGroupObj.refresh_from_db()
+    assert str(cnn.id) in nodeGroupObj.cnnro_ids
 
 
 
@@ -422,16 +422,16 @@ def test_process_Update_cmd_when_exception_occurs(create_TEST_USER, NEG_TEST_ERR
     logger = setup_logging
     init_test_environ(name=NEG_TEST_ERROR_ORG_NAME,the_logger=logger)
     orgAccountObj = get_test_org(NEG_TEST_ERROR_ORG_NAME)
-    clusterObj.is_deployed = True
-    clusterObj.cur_version = 'v3'
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
-    clusterObj.cfg_asg.num = 0
-    clusterObj.cfg_asg.max = 4
-    clusterObj.is_public = False
-    new_desire_num_nodes = clusterObj.cfg_asg.num+1
-    clusterObj.version = 'v3'
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.cur_version = 'v3'
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.cfg_asg.num = 0
+    nodeGroupObj.cfg_asg.max = 4
+    nodeGroupObj.is_public = False
+    new_desire_num_nodes = nodeGroupObj.cfg_asg.num+1
+    nodeGroupObj.version = 'v3'
     orgAccountObj.save()
     test_min = 0
     test_desired = 2
@@ -462,18 +462,18 @@ def test_process_Update_cmd_when_LOW_BALANCE_exception_occurs_ON_Update(create_T
 
     init_test_environ(name=NEG_TEST_ERROR_ORG_NAME,balance=2.0)
     orgAccountObj = get_test_org(NEG_TEST_ERROR_ORG_NAME)
-    clusterObj.is_deployed = True
-    clusterObj.cur_version = 'v3'
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
-    clusterObj.cfg_asg.num = 0
-    clusterObj.cfg_asg.max = 4
-    clusterObj.is_public = False
-    clusterObj.version = 'v3'
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.cur_version = 'v3'
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.cfg_asg.num = 0
+    nodeGroupObj.cfg_asg.max = 4
+    nodeGroupObj.is_public = False
+    nodeGroupObj.version = 'v3'
     orgAccountObj.save()
     #logger.critical(f"BEFORE orgAccountObj:{pprint.pformat(model_to_dict(orgAccountObj,fields=None))}")
-    cost_accounting_cluster(clusterObj)
+    cost_accounting_cluster(nodeGroupObj)
     #logger.critical(f" AFTER orgAccountObj:{pprint.pformat(model_to_dict(orgAccountObj,fields=None))}")
     test_min = 0
     test_desired = 2
@@ -504,16 +504,16 @@ def test_process_Update_cmd_when_exception_occurs_ON_OWNER_PS_CMD(create_TEST_US
     '''
     init_test_environ(name=NEG_TEST_ERROR_ORG_NAME)
     orgAccountObj = get_test_org(NEG_TEST_ERROR_ORG_NAME)
-    clusterObj.is_deployed = True
-    clusterObj.cur_version = 'v3'
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = False
-    clusterObj.cfg_asg.min = 2
-    clusterObj.cfg_asg.num = 0
-    clusterObj.cfg_asg.max = 4
-    clusterObj.is_public = False
-    new_desire_num_nodes = clusterObj.cfg_asg.num+1
-    clusterObj.version = 'v3'
+    nodeGroupObj.is_deployed = True
+    nodeGroupObj.cur_version = 'v3'
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = False
+    nodeGroupObj.cfg_asg.min = 2
+    nodeGroupObj.cfg_asg.num = 0
+    nodeGroupObj.cfg_asg.max = 4
+    nodeGroupObj.is_public = False
+    new_desire_num_nodes = nodeGroupObj.cfg_asg.num+1
+    nodeGroupObj.version = 'v3'
     orgAccountObj.save()
     test_min = 0
     test_desired = 2
@@ -537,16 +537,16 @@ def test_process_Update_cmd_when_exception_occurs_ON_OWNER_PS_CMD(create_TEST_US
     assert str(NEG_TEST_ERROR_MSG) in str(error.value)
 
 def setup_before_process_num_node_table_with_exception(orgAccountObj,ONN_IS_EMPTY,DESTROY_WHEN_NO_NODES,MIN_NODE_CAP,IS_DEPLOYED):
-    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
-    clusterObj.is_deployed = IS_DEPLOYED
-    clusterObj.is_public = False
-    clusterObj.cur_version = 'v1.0.0'
-    clusterObj.save()
-    clusterObj.destroy_when_no_nodes = DESTROY_WHEN_NO_NODES
-    clusterObj.cfg_asg.min = MIN_NODE_CAP
-    clusterObj.cfg_asg.num = MIN_NODE_CAP + 1 # we need this to not equal clusterObj.cfg_asg.min to force the Destroy
-    clusterObj.is_public = clusterObj.is_public
-    clusterObj.version = clusterObj.cur_version
+    nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+    nodeGroupObj.is_deployed = IS_DEPLOYED
+    nodeGroupObj.is_public = False
+    nodeGroupObj.cur_version = 'v1.0.0'
+    nodeGroupObj.save()
+    nodeGroupObj.destroy_when_no_nodes = DESTROY_WHEN_NO_NODES
+    nodeGroupObj.cfg_asg.min = MIN_NODE_CAP
+    nodeGroupObj.cfg_asg.num = MIN_NODE_CAP + 1 # we need this to not equal nodeGroupObj.cfg_asg.min to force the Destroy
+    nodeGroupObj.is_public = nodeGroupObj.is_public
+    nodeGroupObj.version = nodeGroupObj.cur_version
     orgAccountObj.save()
 
     if not ONN_IS_EMPTY:
@@ -562,8 +562,8 @@ def setup_before_process_num_node_table_with_exception(orgAccountObj,ONN_IS_EMPT
                                     desired_num_nodes= MIN_NODE_CAP + 2, # to force the Update
                                     expiration=datetime.now(timezone.utc)-timedelta(minutes=1))# Expired and will be deleted
         assert ClusterNumNode.objects.count() == 1
-    assert clusterObj.num_onn == 0
-    assert clusterObj.num_ps_cmd == 0
+    assert nodeGroupObj.num_onn == 0
+    assert nodeGroupObj.num_ps_cmd == 0
     assert PsCmdResult.objects.count() == 0
 
 def verify_after_process_num_node_table_after_exception(orgAccountObj,ONN_IS_EMPTY,DESTROY_WHEN_NO_NODES,MIN_NODE_CAP,WAS_DEPLOYED):
@@ -575,15 +575,15 @@ def verify_after_process_num_node_table_after_exception(orgAccountObj,ONN_IS_EMP
                     DESTROY_WHEN_NO_NODES:  Boolean indicating if the OrgAccount.destroy_when_no_nodes is True
                     MIN_NODE_CAP:           The OrgAccount.min_node_cap
                     WAS_DEPLOYED:           Boolean indicating if the NodeGroup.is_deployed is True
-        we assume in setup that onnTop.desired_num_nodes != clusterObj.cfg_asg.num: 
+        we assume in setup that onnTop.desired_num_nodes != nodeGroupObj.cfg_asg.num: 
     '''
 
     orgAccountObj.refresh_from_db()
-    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+    nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
     logger.info(f"orgAccountObj.max_ddt:{orgAccountObj.max_ddt}")
     logger.info(f"timedelta(hours=MIN_HRS_TO_LIVE_TO_START):{timedelta(hours=MIN_HRS_TO_LIVE_TO_START)}")
     assert ClusterNumNode.objects.count() == 0 # on exception we remove the entry
-    assert ((clusterObj.cnnro_ids == []) or (clusterObj.cnnro_ids == None)) # cleaned up on exception
+    assert ((nodeGroupObj.cnnro_ids == []) or (nodeGroupObj.cnnro_ids == None)) # cleaned up on exception
     psCmdResultObj = PsCmdResult.objects.first()
     called_process_Update_cmd = True
     if ONN_IS_EMPTY:
@@ -598,15 +598,15 @@ def verify_after_process_num_node_table_after_exception(orgAccountObj,ONN_IS_EMP
             logger.info(f"psCmdResultObj.ps_cmd_output:{psCmdResultObj.ps_cmd_output}")
             logger.info(f"psCmdResultObj.ps_cmd_summary_label:{psCmdResultObj.ps_cmd_summary_label}")
             logger.info(f"psCmdResultObj.expiration:{psCmdResultObj.expiration}")
-    logger.info(f"clusterObj.num_onn:{clusterObj.num_onn} PsCmdResult.objects.count():{PsCmdResult.objects.count()}")
+    logger.info(f"nodeGroupObj.num_onn:{nodeGroupObj.num_onn} PsCmdResult.objects.count():{PsCmdResult.objects.count()}")
     if PsCmdResult.objects.count() == 1:
-        assert clusterObj.num_onn == 1 
+        assert nodeGroupObj.num_onn == 1 
     else:
-        assert clusterObj.num_onn == 0
+        assert nodeGroupObj.num_onn == 0
     if called_process_Update_cmd:
-        assert clusterObj.num_ps_cmd == 1  
+        assert nodeGroupObj.num_ps_cmd == 1  
     else:
-        assert clusterObj.num_ps_cmd == 0
+        assert nodeGroupObj.num_ps_cmd == 0
 
 test_params = [
     ((ProvisionCmdError,Exception),NEG_TEST_GRPC_ERROR_ORG_NAME,True,True,2,True),
@@ -696,19 +696,19 @@ def test_process_num_node_table_NEGATIVE_TESTS(tasks_module,create_TEST_USER, PS
             if IS_DEPLOYED:
                 psCmdResultObj = PsCmdResult.objects.first()
                 assert 'Destroy' in psCmdResultObj.ps_cmd_summary_label
-                assert clusterObj.destroy_when_no_nodes == False # under these conditions on exception we set destroy_when_no_nodes to False to stop loop
-                assert clusterObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
-                assert clusterObj.cfg_asg.min == 0 # on exception we set min to zero
+                assert nodeGroupObj.destroy_when_no_nodes == False # under these conditions on exception we set destroy_when_no_nodes to False to stop loop
+                assert nodeGroupObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
+                assert nodeGroupObj.cfg_asg.min == 0 # on exception we set min to zero
         else:
-            if MIN_NODE_CAP != clusterObj.cfg_asg.num:
+            if MIN_NODE_CAP != nodeGroupObj.cfg_asg.num:
                 psCmdResultObj = PsCmdResult.objects.first()
                 assert 'Update' in psCmdResultObj.ps_cmd_summary_label
-                assert clusterObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
-                assert clusterObj.cfg_asg.min == 0 # on exception we set min to zero
-                assert clusterObj.cfg_asg.min == 0 # on exception we set min to zero
-                assert clusterObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
+                assert nodeGroupObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
+                assert nodeGroupObj.cfg_asg.min == 0 # on exception we set min to zero
+                assert nodeGroupObj.cfg_asg.min == 0 # on exception we set min to zero
+                assert nodeGroupObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
     else:
-        # assume onnTop.desired_num_nodes != clusterObj.cfg_asg.num
+        # assume onnTop.desired_num_nodes != nodeGroupObj.cfg_asg.num
         # Note: here we just remove the entry that got the exception
         # and we do not expect the desired_num_nodes to be changed in this pass
         psCmdResultObj = PsCmdResult.objects.first()
@@ -745,9 +745,9 @@ def test_process_process_num_node_table_when_LOW_BALANCE_exception_occurs_ON_Upd
     #logger.critical(f"COOLOFF_SECS:{COOLOFF_SECS}")
     init_test_environ(name=NEG_TEST_ERROR_ORG_NAME,balance=2.0)
     orgAccountObj = get_test_org(NEG_TEST_ERROR_ORG_NAME)
-    clusterObj = get_test_compute_cluster(orgAccountObj)
+    nodeGroupObj = get_test_compute_cluster(orgAccountObj)
     #logger.critical(f"BEFORE orgAccountObj:{pprint.pformat(model_to_dict(orgAccountObj,fields=None))}")
-    cost_accountingcluster(clusterObj)
+    cost_accountingcluster(nodeGroupObj)
     setup_before_process_num_node_table_with_exception(orgAccountObj,ONN_IS_EMPTY,DESTROY_WHEN_NO_NODES,MIN_NODE_CAP,IS_DEPLOYED)
     orgAccountObj.balance = 2.0 # force low balance exception
     orgAccountObj.save()
@@ -759,18 +759,18 @@ def test_process_process_num_node_table_when_LOW_BALANCE_exception_occurs_ON_Upd
                 psCmdResultObj = PsCmdResult.objects.first()
                 logger.info(f"ps_cmd_summary_label:{psCmdResultObj.ps_cmd_summary_label}")
                 assert 'Destroy' in psCmdResultObj.ps_cmd_summary_label
-                assert clusterObj.destroy_when_no_nodes == DESTROY_WHEN_NO_NODES # we don't throw an exception when destroying for low balance
-                assert clusterObj.cfg_asg.min == MIN_NODE_CAP # on exception we set min to zero
+                assert nodeGroupObj.destroy_when_no_nodes == DESTROY_WHEN_NO_NODES # we don't throw an exception when destroying for low balance
+                assert nodeGroupObj.cfg_asg.min == MIN_NODE_CAP # on exception we set min to zero
         else:
-            if MIN_NODE_CAP != clusterObj.cfg_asg.num:
+            if MIN_NODE_CAP != nodeGroupObj.cfg_asg.num:
                 psCmdResultObj = PsCmdResult.objects.first()
                 assert 'Update' in psCmdResultObj.ps_cmd_summary_label
-                assert clusterObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
-                assert clusterObj.cfg_asg.min == 0 # on exception we set min to zero
-                assert clusterObj.cfg_asg.min == 0 # on exception we set min to zero
-                assert clusterObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
+                assert nodeGroupObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
+                assert nodeGroupObj.cfg_asg.min == 0 # on exception we set min to zero
+                assert nodeGroupObj.cfg_asg.min == 0 # on exception we set min to zero
+                assert nodeGroupObj.cfg_asg.num == 0 # on exception we set desired to zero to match min to stop loop
     else:
-        # assume onnTop.desired_num_nodes != clusterObj.cfg_asg.num
+        # assume onnTop.desired_num_nodes != nodeGroupObj.cfg_asg.num
         # Note: here we just remove the entry that got the exception
         # and we do not expect the desired_num_nodes to be changed in this pass
         psCmdResultObj = PsCmdResult.objects.first()
@@ -785,10 +785,10 @@ def test_get_current_version_after_setup(tasks_module,initialize_test_environ,ve
     '''
     
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
-    clusterObj.provision_env_ready = False
-    clusterObj.save()
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute')
+    nodeGroupObj.provision_env_ready = False
+    nodeGroupObj.save()
     env_ready,setup_occurred = check_provision_env_ready(orgAccountObj)
     assert env_ready == True
     assert setup_occurred == True # we set provision_env_ready to False above so we forced setup
@@ -796,8 +796,8 @@ def test_get_current_version_after_setup(tasks_module,initialize_test_environ,ve
         stub = ps_server_pb2_grpc.ControlStub(channel)
         rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=orgAccountObj.name))
     assert rsp.setup_cfg.name == orgAccountObj.name
-    assert rsp.setup_cfg.version == clusterObj.version
-    assert rsp.setup_cfg.is_public == clusterObj.is_public    
+    assert rsp.setup_cfg.version == nodeGroupObj.version
+    assert rsp.setup_cfg.is_public == nodeGroupObj.is_public    
 
 #@pytest.mark.dev
 @pytest.mark.django_db
@@ -808,14 +808,14 @@ def test_provision_env_ready(tasks_module_to_import,developer_TEST_USER,initiali
         This procedure will test the 'provision_env_ready' routine 
     '''
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    clusterObj.version = 'v3'
-    clusterObj.is_public = False
+    nodeGroupObj = get_test_compute_cluster()
+    nodeGroupObj.version = 'v3'
+    nodeGroupObj.is_public = False
     orgAccountObj.save()
-    clusterObj = NodeGroup.objects.get(org=orgAccountObj,name='compute') # get the cluster object
-    clusterObj.provision_env_ready = False # forces a SetUp to occur
-    clusterObj.save()
-    logger.info(f"{orgAccountObj.name} v:{clusterObj.version} ip:{clusterObj.is_public} clusterObj.provision_env_ready:{clusterObj.provision_env_ready}")
+    nodeGroupObj = NodeGroup.objects.get(org=orgAccountObj,name='compute') # get the cluster object
+    nodeGroupObj.provision_env_ready = False # forces a SetUp to occur
+    nodeGroupObj.save()
+    logger.info(f"{orgAccountObj.name} v:{nodeGroupObj.version} ip:{nodeGroupObj.is_public} nodeGroupObj.provision_env_ready:{nodeGroupObj.provision_env_ready}")
     env_ready,setup_occurred = check_provision_env_ready(orgAccountObj)
     assert env_ready == True
     assert setup_occurred  # fixture already did setup
@@ -823,5 +823,5 @@ def test_provision_env_ready(tasks_module_to_import,developer_TEST_USER,initiali
         stub = ps_server_pb2_grpc.ControlStub(channel)
         rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=orgAccountObj.name))
     assert rsp.setup_cfg.name == orgAccountObj.name
-    assert rsp.setup_cfg.version == clusterObj.version
-    assert rsp.setup_cfg.is_public == clusterObj.is_public
+    assert rsp.setup_cfg.version == nodeGroupObj.version
+    assert rsp.setup_cfg.is_public == nodeGroupObj.is_public

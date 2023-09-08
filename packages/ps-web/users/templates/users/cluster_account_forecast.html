@@ -245,7 +245,7 @@
             $.ajax({
                 headers: { "X-CSRFToken": csrftoken },
                 mode: 'same-origin', // Do not send CSRF token to another domain.
-                url: "{% url 'ajax-cluster-account-forecast' %}",
+                url: "{% url 'ajax-node-group-account-forecast' %}",
                 data: {"org_uuid":  uuid, "granularity":gran.toUpperCase()},
                 type: "GET",
                 dataType:"json",

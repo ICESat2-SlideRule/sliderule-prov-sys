@@ -6,7 +6,7 @@ import pathlib
 from importlib import import_module
 from decimal import *
 from users.tests.utilities_for_unit_tests import OWNER_USER,OWNER_EMAIL,OWNER_PASSWORD,create_test_user
-from users.forms import ClusterCfgForm
+from users.forms import NodeGroupCfgForm
 from users.views import add_org_cluster_orgcost
 from django.contrib import messages
 from django.contrib.auth import get_user_model
@@ -54,7 +54,7 @@ def test_org_form_create_uri(tasks_module):
     owner = create_test_user(first_name='Owner_test_create', last_name="User_test_create", username=OWNER_USER+'test_create', email=OWNER_EMAIL, password=OWNER_PASSWORD)
     app = Application.objects.create(client_id='1492',user=owner,client_secret='1492',name='test_app')
 
-    form = ClusterCfgForm(data={
+    form = NodeGroupCfgForm(data={
         'name': 'test_create',
         'owner': owner, # use same as sliderule org
         'point_of_contact_name': 'test point of contact here',

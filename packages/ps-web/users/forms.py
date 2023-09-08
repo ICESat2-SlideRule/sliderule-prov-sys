@@ -2,7 +2,6 @@ from django import forms
 from django.forms import ModelForm
 from django.contrib.auth.forms import UserCreationForm, UsernameField, UserChangeForm
 from django.forms import BaseInlineFormSet
-from django.contrib.contenttypes.forms import BaseGenericInlineFormSet
 
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
 from .models import Membership, OrgAccount, NodeGroup, User, ClusterNumNode, ASGNodeLimits, Budget
@@ -23,6 +22,9 @@ from django.core.exceptions import ValidationError
 from django.forms.widgets import NumberInput
 from django.forms import ModelForm, NumberInput, TextInput, CheckboxInput, Widget
 
+class ExampleForm(forms.Form):
+    name = forms.CharField()
+    email = forms.EmailField()
 
 class CustomSignupForm(SignupForm):
     first_name = forms.CharField(max_length=30, label='First Name')
@@ -107,13 +109,13 @@ class BudgetForm(forms.ModelForm):
         model = Budget
         fields = ['max_allowance', 'monthly_allowance', 'balance']
 
-class ClusterForm(ModelForm):
+class NodeGroupCreateForm(ModelForm):
     '''
-        For creating a new cluster
+        For creating a new Node Group
     '''
     class Meta:
         model = NodeGroup
-        fields = [ 'name', 'org', 'node_mgr_fixed_cost', 'node_fixed_cost']
+        fields = [ 'name', 'node_mgr_fixed_cost', 'node_fixed_cost']
         readonly_fields = ['org']
 
 class ASGNodeLimitsForm(ModelForm):
@@ -131,9 +133,9 @@ class ASGNodeLimitsForm(ModelForm):
         model = ASGNodeLimits
         fields = ['min', 'num', 'max']
 
-class ClusterCfgForm(ModelForm):
+class NodeGroupCfgForm(ModelForm):
     '''
-    For configuring an existing cluster
+    For configuring an existing Node Group
     '''
     version = forms.ChoiceField(widget=forms.Select(attrs={'id': 'version'}))
     is_public = forms.BooleanField(required=False, widget=forms.CheckboxInput(attrs={'id': 'is_public'}))
@@ -152,13 +154,24 @@ class OrgProfileForm(ModelForm):
         model = OrgAccount
         fields = ['point_of_contact_name', 'email', ]
 
+class ReadOnlyBudgetForm(forms.ModelForm):
+    class Meta:
+        model = Budget
+        fields = ['balance', 'max_allowance', 'monthly_allowance']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['balance'].widget.attrs['readonly'] = True
+        self.fields['max_allowance'].widget.attrs['readonly'] = True
+        self.fields['monthly_allowance'].widget.attrs['readonly'] = True
+
+ReadOnlyBudgetFormSet   = generic_inlineformset_factory(Budget, form=ReadOnlyBudgetForm, extra=0, fields=['balance','max_allowance','monthly_allowance'], can_delete=False)
+NodeGroupBudgetFormSet  = generic_inlineformset_factory(Budget, extra=0, fields=['balance','max_allowance','monthly_allowance'],can_delete=False)
+
 class OrgAccountForm(ModelForm):
     class Meta:
         model = OrgAccount
         fields = '__all__'
-
-
-BudgetFormSet = generic_inlineformset_factory(Budget, extra=0, fields=['balance','max_allowance','monthly_allowance'],can_delete=False)
 
 class CustomLoginForm(LoginForm):
     def __init__(self, *args, **kwargs):

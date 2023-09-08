@@ -53,8 +53,8 @@ def test_no_token(caplog,client,mock_email_backend,initialize_test_environ):
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
-    url = reverse('post-num-nodes-ttl',args=[orgAccountObj.name,clusterObj.name,3,15])
+    nodeGroupObj = get_test_compute_cluster()
+    url = reverse('post-num-nodes-ttl',args=[orgAccountObj.name,nodeGroupObj.name,3,15])
 
     response = client.post(url)
     assert (response.status_code == 400)   # no token was provided
@@ -91,7 +91,7 @@ def test_org_CNN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
     url = reverse('org-token-obtain-pair')
 
@@ -106,13 +106,13 @@ def test_org_CNN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
     assert(json_data['refresh_lifetime']=='86400.0')   
 
     loop_count=0
-    clusterObj.num_owner_ps_cmd=0
-    clusterObj.num_ps_cmd=0
-    clusterObj.num_ps_cmd_successful=0
-    clusterObj.num_onn=0
-    clusterObj.save()
+    nodeGroupObj.num_owner_ps_cmd=0
+    nodeGroupObj.num_ps_cmd=0
+    nodeGroupObj.num_ps_cmd_successful=0
+    nodeGroupObj.num_onn=0
+    nodeGroupObj.save()
 
-    url = reverse('post-num-nodes-ttl',args=[orgAccountObj.name,clusterObj.name,3,15])    
+    url = reverse('post-num-nodes-ttl',args=[orgAccountObj.name,nodeGroupObj.name,3,15])    
 
     response = client.post(url,headers={'Authorization': f"Bearer {json_data['access']}"})
     assert (response.status_code == 200) 
@@ -121,33 +121,33 @@ def test_org_CNN_ttl(caplog,client,mock_email_backend,initialize_test_environ):
     assert(json_data['msg']!='')   
     assert(json_data['error_msg']=='') 
     logger.info(f"msg:{json_data['msg']}")  
-    clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+    nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
     
-    task_idle, loop_count = loop_iter(clusterObj,loop_count)
-    clusterObj.refresh_from_db()
+    task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+    nodeGroupObj.refresh_from_db()
     assert(loop_count==1)
-    assert(clusterObj.provision_env_ready)
-    assert(clusterObj.provisioning_suspended==False)
-    assert(clusterObj.num_ps_cmd==1) # cnn triggered update
-    assert(clusterObj.num_ps_cmd_successful==1) 
-    assert(clusterObj.num_onn==1)
+    assert(nodeGroupObj.provision_env_ready)
+    assert(nodeGroupObj.provisioning_suspended==False)
+    assert(nodeGroupObj.num_ps_cmd==1) # cnn triggered update
+    assert(nodeGroupObj.num_ps_cmd_successful==1) 
+    assert(nodeGroupObj.num_onn==1)
     
 
-    task_idle, loop_count = loop_iter(clusterObj,loop_count)
-    clusterObj.refresh_from_db()
+    task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+    nodeGroupObj.refresh_from_db()
     orgAccountObj.refresh_from_db()
     assert(task_idle)
     assert(loop_count==2)   
 
     assert PsCmdResult.objects.count() == 1 # Update 
-    psCmdResultObjs = PsCmdResult.objects.filter(cluster=clusterObj).order_by('creation_date')
+    psCmdResultObjs = PsCmdResult.objects.filter(cluster=nodeGroupObj).order_by('creation_date')
     logger.info(f"[0]:{psCmdResultObjs[0].ps_cmd_summary_label}")
     assert 'Update' in psCmdResultObjs[0].ps_cmd_summary_label
 
-    assert(clusterObj.provisioning_suspended==False)
-    assert(clusterObj.num_ps_cmd==1)
-    assert(clusterObj.num_ps_cmd_successful==1) 
-    assert(clusterObj.num_onn==1)
+    assert(nodeGroupObj.provisioning_suspended==False)
+    assert(nodeGroupObj.num_ps_cmd==1)
+    assert(nodeGroupObj.num_ps_cmd_successful==1) 
+    assert(nodeGroupObj.num_onn==1)
     
 
 #@pytest.mark.dev
@@ -160,7 +160,7 @@ def test_org_CNN(caplog,client,mock_email_backend,initialize_test_environ):
     caplog.set_level(logging.DEBUG)
     
     orgAccountObj = get_test_org()
-    clusterObj = get_test_compute_cluster()
+    nodeGroupObj = get_test_compute_cluster()
     
     url = reverse('org-token-obtain-pair')
 
@@ -175,13 +175,13 @@ def test_org_CNN(caplog,client,mock_email_backend,initialize_test_environ):
     assert(json_data['refresh_lifetime']=='86400.0')   
 
     loop_count=0
-    clusterObj.num_owner_ps_cmd=0
-    clusterObj.num_ps_cmd=0
-    clusterObj.num_ps_cmd_successful=0
-    clusterObj.num_onn=0
-    clusterObj.save()
+    nodeGroupObj.num_owner_ps_cmd=0
+    nodeGroupObj.num_ps_cmd=0
+    nodeGroupObj.num_ps_cmd_successful=0
+    nodeGroupObj.num_onn=0
+    nodeGroupObj.save()
 
-    url = reverse('put-num-nodes',args=[orgAccountObj.name,clusterObj.name,3])
+    url = reverse('put-num-nodes',args=[orgAccountObj.name,nodeGroupObj.name,3])
   
     response = client.put(url,headers={'Authorization': f"Bearer {json_data['access']}"})
     assert (response.status_code == 200) 
@@ -190,18 +190,18 @@ def test_org_CNN(caplog,client,mock_email_backend,initialize_test_environ):
     assert(json_data['msg']!='')   
     assert(json_data['error_msg']=='') 
     logger.info(f"msg:{json_data['msg']}")  
-    clusterObj.refresh_from_db() # The client.put above updated the DB so we need this
+    nodeGroupObj.refresh_from_db() # The client.put above updated the DB so we need this
     
     
   
-    task_idle, loop_count = loop_iter(clusterObj,loop_count)
-    clusterObj.refresh_from_db()
+    task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
+    nodeGroupObj.refresh_from_db()
     orgAccountObj.refresh_from_db()
     assert(loop_count==1)
-    assert(clusterObj.provision_env_ready)
-    assert(clusterObj.provisioning_suspended==False)
-    assert(clusterObj.num_ps_cmd==1) # cnn triggered update
-    assert(clusterObj.num_ps_cmd_successful==1) 
-    assert(clusterObj.num_onn==1)
+    assert(nodeGroupObj.provision_env_ready)
+    assert(nodeGroupObj.provisioning_suspended==False)
+    assert(nodeGroupObj.num_ps_cmd==1) # cnn triggered update
+    assert(nodeGroupObj.num_ps_cmd_successful==1) 
+    assert(nodeGroupObj.num_onn==1)
     
 

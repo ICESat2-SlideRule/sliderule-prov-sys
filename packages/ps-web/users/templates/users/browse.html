@@ -75,13 +75,6 @@
                                                                     {% endif %}
                                                                     <div class="container text-center">            
                                                                         <div class="btn-group">
-                                                                            {% if not request.user.is_superuser  %}
-                                                                                {% if user_is_developer %}
-                                                                                    <a class="tag btn btn-outline-primary"  href="{% url 'cluster-create'%}">Add New Cluster</a>
-                                                                                {% endif %}
-                                                                            {% endif %}
-                                                                        </div>
-                                                                        <div class="btn-group">
                                                                             {% if user_is_developer %}
                                                                                 <form action="{% url 'org-delete' org.id %}" method="post" onsubmit="return confirmDelete();">
                                                                                     {% csrf_token %}

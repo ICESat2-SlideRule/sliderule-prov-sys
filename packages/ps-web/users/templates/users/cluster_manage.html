@@ -98,7 +98,7 @@
                                                                 <a class="btn btn-primary mt-1 me-1 disabled"><i class="im im-edit"></i> Monitor</a>
                                                             {% endif %}
                                                             <button class="btn btn-primary mt-1 me-1" type="button" id="destroy_modal_btn" data-bs-toggle="modal" data-bs-target="#psDestroyModal" data-bs-url="{% url 'org-destroy-cluster' org.id %}" data-bs-action="Destroy">Destroy</button>
-                                                            <a class="btn btn-primary mt-1 me-1" href=" {% url 'org-manage-cluster' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
+                                                            <a class="btn btn-primary mt-1 me-1" href=" {% url 'node-group-mange' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
                                                         </div>
                                                         {% if user_is_developer and debug %}
                                                         <dt>ProvSys Stats</dt>
@@ -198,7 +198,7 @@
                                                         </dl>
                                                         <div class="mt-auto d-flex justify-content-center ">
                                                             <button type="button" id="config_modal_btn"  class="btn btn-primary mt-1 me-1" data-bs-toggle="modal" data-bs-target="#psConfigModal"  data-bs-url="{% url 'org-configure' org.id %}"  data-bs-action="Configure">Configure</button>
-                                                            <a class="btn btn-primary mt-1 me-1" href=" {% url 'org-manage-cluster' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
+                                                            <a class="btn btn-primary mt-1 me-1" href=" {% url 'node-group-mange' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
                                                             <div class="modal fade" id="psConfigModal" tabindex="-1" aria-labelledby="psConfigModalLabel" aria-hidden="true">
                                                                 <div class="modal-dialog modal-dialog-scrollable">
                                                                     <div class="modal-content">
@@ -239,7 +239,7 @@
                                 <div class="accordion-body">
                                     <p class="utc-time mx-1 my-1" data-utc-time="{{ now.isoformat }}">Loading...</p>
                                     <div class="container-fluid overflow-auto">
-                                        <form method="POST" action="{% url 'org-manage-cluster' org.id %}" class="d-inline">
+                                        <form method="POST" action="{% url 'node-group-mange' org.id %}" class="d-inline">
                                             {% csrf_token %}
                                             {{ add_cnn_form }}
                                             <button type="submit" class="btn btn-primary mt-1 me-1" name="form_submit" value="add_onn">
@@ -251,7 +251,7 @@
                                             <button type="submit" class="btn btn-primary mt-1 me-1">
                                                 <i class="im im-edit"></i> Clear Inactive
                                             </button>
-                                            <a class="btn btn-primary mt-1 me-1" href=" {% url 'org-manage-cluster' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
+                                            <a class="btn btn-primary mt-1 me-1" href=" {% url 'node-group-mange' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
                                         </form>
                                         <table class="table">
                                             <thead>
@@ -320,7 +320,7 @@
                                                             </div>
                                                             <div>
                                                                 {% if  ps_cmd_rslt_obj.error == 'still processing' and cluster.active_ps_cmd != '' %}
-                                                                    <a class="btn btn-primary my-1 mx-1", href=" {% url 'org-manage-cluster' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
+                                                                    <a class="btn btn-primary my-1 mx-1", href=" {% url 'node-group-mange' org.id %} "><span><i class="bi-arrow-clockwise"></i></span></a>
                                                                 {% endif %}
                                                             </div>
                                                             <div class="flex-grow-1"></div>

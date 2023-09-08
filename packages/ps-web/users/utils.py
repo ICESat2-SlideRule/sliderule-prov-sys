@@ -25,7 +25,7 @@ from api.tokens import OrgRefreshToken
 from api.serializers import MembershipSerializer
 from rest_framework_simplejwt.settings import api_settings
 from django_celery_results.models import TaskResult
-from .tasks import get_ps_versions, get_cluster_queue_name_str, get_cluster_queue_name, forever_loop_main_task, getGranChoice, set_PROVISIONING_DISABLED, get_PROVISIONING_DISABLED, init_new_org_memberships
+from .tasks import get_ps_versions, get_node_group_queue_name_str, get_node_group_queue_name, forever_loop_main_task, getGranChoice, set_PROVISIONING_DISABLED, get_PROVISIONING_DISABLED, init_new_org_memberships
 from oauth2_provider.models import Application
 from users.global_constants import *
 
@@ -91,11 +91,11 @@ def searchMemberships(request):
 
     return objs, search_query
 
-def get_db_cluster_cost(gran, clusterObj):
+def get_db_cluster_cost(gran, nodeGroupObj):
     granObj = getGranChoice(granularity=gran)
-    LOG.info(f"{clusterObj} {granObj.granularity}")
+    LOG.info(f"{nodeGroupObj} {granObj.granularity}")
     try:
-        orgCost_qs0 = Cost.objects.filter(object_id=clusterObj.id)
+        orgCost_qs0 = Cost.objects.filter(object_id=nodeGroupObj.id)
         # LOG.info(repr(orgCost_qs0))
         # LOG.info(orgCost_qs0[0].org.id)
         # LOG.info(orgCost_qs0[0].org.name)
@@ -106,11 +106,11 @@ def get_db_cluster_cost(gran, clusterObj):
         #LOG.info(repr(orgCostObj))
         return True, orgCostObj
     except ObjectDoesNotExist as e:
-        emsg = f"{clusterObj} {gran} report does not exist?"
+        emsg = f"{nodeGroupObj} {gran} report does not exist?"
         LOG.error(emsg)
         return False, None
     except Exception as e:
-        emsg = f"{clusterObj} {gran} report does not exist?"
+        emsg = f"{nodeGroupObj} {gran} report does not exist?"
         LOG.exception(emsg)
         return False, None
 
@@ -165,10 +165,10 @@ def get_new_tokens(org):
         'access_lifetime': str(api_settings.ACCESS_TOKEN_LIFETIME.total_seconds()),
     }
 
-def create_cluster_queue(clusterObj):
+def create_node_group_queue(nodeGroupObj):
     hostname = socket.gethostname()
     LOG.info(f"hostname:{hostname}")
-    qn = get_cluster_queue_name_str(clusterObj.__str__()) # Unique queue name for this cluster with org prefix
+    qn = get_node_group_queue_name_str(nodeGroupObj.__str__()) # Unique queue name for this cluster with org prefix
     LOG.info(f"creating queue {qn}")
     SHELL_CMD=f"celery -A ps_web worker -n {qn}@{hostname} -l error -E -Q {qn} --concurrency=1".split(" ")
     LOG.info(f"subprocess--> {SHELL_CMD}")
@@ -205,26 +205,26 @@ def init_celery():
     LOG.info(f"subprocess--> {SHELL_CMD}")
     subprocess.Popen(SHELL_CMD)
 
-    clusters_qs = NodeGroup.objects.all()
-    LOG.info("clusters_qs:%s", repr(clusters_qs))
-    for clusterObj in clusters_qs:
+    ng_qs = NodeGroup.objects.all()
+    LOG.info("ng_qs:%s", repr(ng_qs))
+    for nodeGroupObj in ng_qs:
         try:
-            if clusterObj.name == 'uninitialized':
+            if nodeGroupObj.name == 'uninitialized':
                 LOG.error(f"Ignoring uninitialized OrgAccount.id:{OrgAccount.id}")
             else:
-                p = create_cluster_queue(clusterObj)
-                clusterObj.loop_count = 0 # reset this but not the others
-                clusterObj.num_ps_cmd = 0
-                clusterObj.num_ps_cmd_successful = 0
-                clusterObj.num_owner_ps_cmd = 0
-                clusterObj.num_onn = 0
-                clusterObj.save(update_fields=['loop_count','num_ps_cmd','num_ps_cmd_successful','num_owner_ps_cmd','num_onn'])
-                loop_count = clusterObj.loop_count
-                LOG.info(f"Entering forever loop for {clusterObj} at loop_count:{clusterObj.loop_count} num_ps_cmd:{clusterObj.num_ps_cmd_successful}/{clusterObj.num_ps_cmd} num_onn:{clusterObj.num_onn}")
-                clusterObj.provision_env_ready = False # this forces a SetUp 
-                clusterObj.save(update_fields=['provision_env_ready'])
-                LOG.info(f"Setting provision_env_ready to False to force initialization for {clusterObj} at loop_count:{clusterObj.loop_count} num_ps_cmd:{clusterObj.num_ps_cmd_successful}/{clusterObj.num_ps_cmd} num_onn:{clusterObj.num_onn}")
-                forever_loop_main_task.apply_async((clusterObj.__str__(),loop_count),queue=get_cluster_queue_name(clusterObj))
+                p = create_node_group_queue(nodeGroupObj)
+                nodeGroupObj.loop_count = 0 # reset this but not the others
+                nodeGroupObj.num_ps_cmd = 0
+                nodeGroupObj.num_ps_cmd_successful = 0
+                nodeGroupObj.num_owner_ps_cmd = 0
+                nodeGroupObj.num_onn = 0
+                nodeGroupObj.save(update_fields=['loop_count','num_ps_cmd','num_ps_cmd_successful','num_owner_ps_cmd','num_onn'])
+                loop_count = nodeGroupObj.loop_count
+                LOG.info(f"Entering forever loop for {nodeGroupObj} at loop_count:{nodeGroupObj.loop_count} num_ps_cmd:{nodeGroupObj.num_ps_cmd_successful}/{nodeGroupObj.num_ps_cmd} num_onn:{nodeGroupObj.num_onn}")
+                nodeGroupObj.provision_env_ready = False # this forces a SetUp 
+                nodeGroupObj.save(update_fields=['provision_env_ready'])
+                LOG.info(f"Setting provision_env_ready to False to force initialization for {nodeGroupObj} at loop_count:{nodeGroupObj.loop_count} num_ps_cmd:{nodeGroupObj.num_ps_cmd_successful}/{nodeGroupObj.num_ps_cmd} num_onn:{nodeGroupObj.num_onn}")
+                forever_loop_main_task.apply_async((nodeGroupObj.__str__(),loop_count),queue=get_node_group_queue_name(nodeGroupObj))
         except Exception as e:
             LOG.error(f"Caught an exception creating queues: {e}")
         LOG.info(f"forked subprocess--> {SHELL_CMD}")
@@ -276,15 +276,16 @@ def add_org_cost(f):
     msg = init_new_org_memberships(new_org)
     return new_org,msg,emsg
 
-def add_cluster_cost(f,start_main_loop=False):
-    new_cluster,msg,emsg = add_obj_cost(f)
-    p = create_cluster_queue(new_cluster)
+def add_node_group_cost(f,start_main_loop=False):
+    new_node_group,msg,emsg = add_obj_cost(f)
+    p = create_node_group_queue(new_node_group)
     if start_main_loop:
-        forever_loop_main_task.apply_async((new_cluster.__str__(),0),queue=get_cluster_queue_name(new_cluster))
-    # always add this to the OAUTH app (only one exists anyway)
-    for app in Application.objects.all():
-        domain = os.environ.get("DOMAIN")
-        # new_cluster.__str__() has <org_name>-<cluster_name>
-        app.redirect_uris += '\n{}'.format(f"https://{new_cluster.__str__()}.{domain}/redirect_uri/")
-        app.save()
-    return new_cluster,msg,emsg
+        forever_loop_main_task.apply_async((new_node_group.__str__(),0),queue=get_node_group_queue_name(new_node_group))
+    if new_node_group.name == 'compute':
+        # always add this to the OAUTH app (only one exists anyway)
+        for app in Application.objects.all():
+            domain = os.environ.get("DOMAIN")
+            # new_node_group.__str__() has <org_name>-<cluster_name>
+            app.redirect_uris += '\n{}'.format(f"https://{new_node_group.__str__()}.{domain}/redirect_uri/")
+            app.save()
+    return new_node_group,msg,emsg

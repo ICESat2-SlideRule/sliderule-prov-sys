@@ -20,9 +20,9 @@ from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.db.transaction import get_autocommit
 from .models import NodeGroup, GranChoice, OrgAccount, Cost, Membership, User, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget
-from .forms import MembershipForm, ClusterCfgForm, ClusterForm, OrgAccountForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,BudgetForm,BudgetFormSet
-from .utils import get_db_cluster_cost,add_org_cost,add_cluster_cost
-from .tasks import get_versions, update_burn_rates, getGranChoice, sort_CNN_by_nn_exp,forever_loop_main_task,get_cluster_queue_name,remove_num_node_requests,get_PROVISIONING_DISABLED,set_PROVISIONING_DISABLED,process_num_nodes_api
+from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgAccountForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,BudgetForm,ReadOnlyBudgetFormSet,NodeGroupBudgetFormSet
+from .utils import get_db_cluster_cost,add_org_cost,add_node_group_cost
+from .tasks import get_versions, update_burn_rates, getGranChoice, sort_CNN_by_nn_exp,forever_loop_main_task,get_node_group_queue_name,remove_num_node_requests,get_PROVISIONING_DISABLED,set_PROVISIONING_DISABLED,process_num_nodes_api
 from django.core.mail import send_mail
 from django.conf import settings
 from django.forms import formset_factory
@@ -41,6 +41,7 @@ from .tasks import cost_accounting_org,cost_accounting_cluster, init_new_org_mem
 from django.contrib.auth import get_user_model
 from allauth.account.decorators import verified_email_required
 from django.contrib.sites.models import Site
+
 
 
 # logging.basicConfig(
@@ -93,8 +94,8 @@ def send_activation_email(request, orgname, user):
 @login_required(login_url='account_login')
 @verified_email_required
 def orgManageMembers(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
     LOG.info(f"{request.method} {orgAccountObj.name}")
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
         memberships = Membership.objects.filter(org=orgAccountObj.id)
@@ -141,29 +142,29 @@ def orgManageMembers(request, pk):
 
 @login_required(login_url='account_login')
 @verified_email_required
-def clusterManage(request, pk):
+def nodeGroupManage(request, pk):
     #LOG.info("%s %s",request.method,pk)
-    clusterObj = NodeGroup.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
-    LOG.info(f"{request.method} {clusterObj} loop_count:{clusterObj.loop_count} ps:{clusterObj.num_ps_cmd} ops:{clusterObj.num_owner_ps_cmd} cnn:{clusterObj.num_onn} autocommit:{get_autocommit()}")
-    clusterNumNodeObjs = sort_CNN_by_nn_exp(clusterObj)
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
+    LOG.info(f"{request.method} {nodeGroupObj} loop_count:{nodeGroupObj.loop_count} ps:{nodeGroupObj.num_ps_cmd} ops:{nodeGroupObj.num_owner_ps_cmd} cnn:{nodeGroupObj.num_onn} autocommit:{get_autocommit()}")
+    clusterNumNodeObjs = sort_CNN_by_nn_exp(nodeGroupObj)
     user_is_developer = request.user.groups.filter(name='PS_Developer').exists()
     if user_is_developer or orgAccountObj.owner == request.user:
         try:
-            filter_time = (datetime.now(timezone.utc)-timedelta(hours=clusterObj.pcqr_display_age_in_hours)).replace(microsecond=0)
-            purge_time = (datetime.now(timezone.utc)-timedelta(days=clusterObj.pcqr_retention_age_in_days)).replace(microsecond=0)
-            LOG.debug(f"{clusterObj} display filter_tm:{filter_time} current purge tm:{purge_time}")
-            psCmdResultObjs = PsCmdResult.objects.filter(Q(expiration__gt=(filter_time)) | Q(expiration__isnull=True)).filter(cluster=clusterObj).order_by('-creation_date')
+            filter_time = (datetime.now(timezone.utc)-timedelta(hours=nodeGroupObj.pcqr_display_age_in_hours)).replace(microsecond=0)
+            purge_time = (datetime.now(timezone.utc)-timedelta(days=nodeGroupObj.pcqr_retention_age_in_days)).replace(microsecond=0)
+            LOG.debug(f"{nodeGroupObj} display filter_tm:{filter_time} current purge tm:{purge_time}")
+            psCmdResultObjs = PsCmdResult.objects.filter(Q(expiration__gt=(filter_time)) | Q(expiration__isnull=True)).filter(cluster=nodeGroupObj).order_by('-creation_date')
         except PsCmdResult.DoesNotExist:
             psCmdResultObjs = None
-        #LOG.info("%s is_deployed?:%s  deployed_state:%s", clusterObj, clusterObj.is_deployed,clusterObj.deployed_state)
-        update_burn_rates(clusterObj) # updates clusterObj.version clusterObj.cur_asg.num
+        #LOG.info("%s is_deployed?:%s  deployed_state:%s", nodeGroupObj, nodeGroupObj.is_deployed,nodeGroupObj.deployed_state)
+        update_burn_rates(nodeGroupObj) # updates nodeGroupObj.version nodeGroupObj.cur_asg.num
 
         if request.method == "POST":
             form_submit_value = request.POST.get('form_submit')
             LOG.info(f"form_submit_value:{form_submit_value}")
             if form_submit_value == 'add_onn':
-                add_cnn_form = ClusterNumNodeForm(request.POST,min_nodes=clusterObj.cfg_asg.min,max_nodes=clusterObj.cfg_asg.max, prefix = 'add_onn')
+                add_cnn_form = ClusterNumNodeForm(request.POST,min_nodes=nodeGroupObj.cfg_asg.min,max_nodes=nodeGroupObj.cfg_asg.max, prefix = 'add_onn')
                 msg = ''
                 if (add_cnn_form.is_valid() and (int(add_cnn_form.data['add_onn-desired_num_nodes']) >= 0)):
                     desired_num_nodes = add_cnn_form.cleaned_data['desired_num_nodes']
@@ -172,7 +173,7 @@ def clusterManage(request, pk):
                     if ttl_minutes != int(add_cnn_form.data['add_onn-ttl_minutes']):
                         msg = f"Clamped ttl_minutes! - "
                     expire_time = datetime.now(timezone.utc)+timedelta(minutes=ttl_minutes)
-                    jrsp,status = process_num_nodes_api(name=orgAccountObj.name, cluster_name=clusterObj.name, user=request.user, desired_num_nodes=desired_num_nodes, expire_time=expire_time)
+                    jrsp,status = process_num_nodes_api(name=orgAccountObj.name, cluster_name=nodeGroupObj.name, user=request.user, desired_num_nodes=desired_num_nodes, expire_time=expire_time)
                     if status == 200:
                         msg += jrsp['msg']
                         messages.success(request,msg)
@@ -181,32 +182,32 @@ def clusterManage(request, pk):
                 else:
                     emsg = f"Input Errors:{add_cnn_form.errors.as_text}"
                     messages.error(request, emsg)
-                    LOG.info(f"Did not create CNN for {clusterObj} {emsg}")
+                    LOG.info(f"Did not create CNN for {nodeGroupObj} {emsg}")
             else:
-                add_cnn_form = ClusterNumNodeForm(min_nodes=clusterObj.cfg_asg.min,max_nodes=OrgAccount.admin_max_node_cap,prefix = 'add_onn')
+                add_cnn_form = ClusterNumNodeForm(min_nodes=nodeGroupObj.cfg_asg.min,max_nodes=OrgAccount.admin_max_node_cap,prefix = 'add_onn')
         else:
-            add_cnn_form = ClusterNumNodeForm(min_nodes=clusterObj.cfg_asg.min,max_nodes=OrgAccount.admin_max_node_cap,prefix = 'add_onn')
-        LOG.info(f"{clusterObj} cluster current_version:{clusterObj.cur_version} provision_env_ready:{clusterObj.provision_env_ready}")
+            add_cnn_form = ClusterNumNodeForm(min_nodes=nodeGroupObj.cfg_asg.min,max_nodes=OrgAccount.admin_max_node_cap,prefix = 'add_onn')
+        LOG.info(f"{nodeGroupObj} cluster current_version:{nodeGroupObj.cur_version} provision_env_ready:{nodeGroupObj.provision_env_ready}")
         #LOG.info(f"about to get versions")
         versions = get_versions()
-        config_form = ClusterCfgForm(instance=clusterObj,available_versions=versions)
+        config_form = NodeGroupCfgForm(instance=nodeGroupObj,available_versions=versions)
 
         domain = os.environ.get("DOMAIN")
         pending_refresh = None
         pending_destroy = None
         try:
-            OwnerPSCmd.objects.get(cluster=clusterObj, ps_cmd='Refresh')
+            OwnerPSCmd.objects.get(cluster=nodeGroupObj, ps_cmd='Refresh')
             pending_refresh = True
         except OwnerPSCmd.DoesNotExist:
             pending_refresh = False
         try:
-            OwnerPSCmd.objects.get(cluster=clusterObj, ps_cmd='Destroy')
+            OwnerPSCmd.objects.get(cluster=nodeGroupObj, ps_cmd='Destroy')
             pending_destroy = True
         except OwnerPSCmd.DoesNotExist:
             pending_destroy = False
-        context = {'org': orgAccountObj, 'cluster': clusterObj, 'add_cnn_form': add_cnn_form,
+        context = {'org': orgAccountObj, 'cluster': nodeGroupObj, 'add_cnn_form': add_cnn_form,
                 'config_form': config_form, 'ps_cmd_rslt_objs':psCmdResultObjs,
-                'cluster_mod_date_utc': clusterObj.modified_date.replace(tzinfo=pytz.utc),
+                'cluster_mod_date_utc': nodeGroupObj.modified_date.replace(tzinfo=pytz.utc),
                 'cnn_objs':clusterNumNodeObjs,
                 'domain':domain, 'user_is_developer':user_is_developer, 'now':datetime.now(timezone.utc),
                 'PROVISIONING_DISABLED': get_PROVISIONING_DISABLED(),
@@ -214,19 +215,19 @@ def clusterManage(request, pk):
                 'pending_destroy':pending_destroy,
                 }
         
-        LOG.info(f"{request.user.username} {request.method} {clusterObj.id} name:{clusterObj} is_public:{clusterObj.is_public} version:{clusterObj.version} min_node_cap:{clusterObj.cfg_asg.min} max_node_cap:{clusterObj.cfg_asg.max} allow_deploy_by_token:{clusterObj.allow_deploy_by_token} destroy_when_no_nodes:{clusterObj.destroy_when_no_nodes} pending_refresh:{pending_refresh} pending_destroy:{pending_destroy}")
-        #LOG.info("rendering users/cluster_manage.html")
-        return render(request, 'users/cluster_manage.html', context)
+        LOG.info(f"{request.user.username} {request.method} {nodeGroupObj.id} name:{nodeGroupObj} is_public:{nodeGroupObj.is_public} version:{nodeGroupObj.version} min_node_cap:{nodeGroupObj.cfg_asg.min} max_node_cap:{nodeGroupObj.cfg_asg.max} allow_deploy_by_token:{nodeGroupObj.allow_deploy_by_token} destroy_when_no_nodes:{nodeGroupObj.destroy_when_no_nodes} pending_refresh:{pending_refresh} pending_destroy:{pending_destroy}")
+        #LOG.info("rendering users/node_group_manage.html")
+        return render(request, 'users/node_group_manage.html', context)
     else:
-        LOG.info(f"{request.user.username} {request.method} {clusterObj} UNAUTHORIZED")
+        LOG.info(f"{request.user.username} {request.method} {nodeGroupObj} UNAUTHORIZED")
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
 
 @login_required(login_url='account_login')
 @verified_email_required
-def clusterRefresh(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
+def nodeGroupRefresh(request, pk):
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
     LOG.info("%s %s",request.method,orgAccountObj.name)
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
         if request.method == 'POST':
@@ -236,7 +237,7 @@ def clusterRefresh(request, pk):
             msg = ''
             try:
                 try:
-                    owner_ps_cmd = OwnerPSCmd.objects.get(cluster=clusterObj, ps_cmd='Refresh')
+                    owner_ps_cmd = OwnerPSCmd.objects.get(cluster=nodeGroupObj, ps_cmd='Refresh')
                     msg = f" -- IGNORING -- Refresh {orgAccountObj.name} already queued for processing"
                 except OwnerPSCmd.DoesNotExist:
                     owner_ps_cmd = OwnerPSCmd.objects.create(user=request.user, org=orgAccountObj, ps_cmd='Refresh', create_time=datetime.now(timezone.utc))
@@ -248,20 +249,20 @@ def clusterRefresh(request, pk):
                 status = 500
                 LOG.exception("caught exception:")
                 emsg = "Caught exception:"+repr(e)
-        # GET just displays cluster_manage
-        LOG.info("redirect to org-manage-cluster")
+        # GET just displays node_group_manage
+        LOG.info("redirect to node-group-mange")
         for handler in LOG.handlers:
             handler.flush()
-        return redirect('org-manage-cluster',pk=orgAccountObj.id)
+        return redirect('node-group-mange',pk=orgAccountObj.id)
     else:
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
 
 @login_required(login_url='account_login')
 @verified_email_required
-def clusterDestroy(request, pk):
-    clusterObj = Cluster.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
+def nodeGroupDestroy(request, pk):
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
     LOG.info("%s %s",request.method,orgAccountObj.name)
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
         if request.method == 'POST':
@@ -271,7 +272,7 @@ def clusterDestroy(request, pk):
             msg=''
             try:
                 try:
-                    owner_ps_cmd = OwnerPSCmd.objects.get(cluster=clusterObj, ps_cmd='Destroy')
+                    owner_ps_cmd = OwnerPSCmd.objects.get(cluster=nodeGroupObj, ps_cmd='Destroy')
                     msg = f" -- IGNORING -- Destroy {orgAccountObj.name} already queued for processing"
                 except OwnerPSCmd.DoesNotExist:
                     jrsp = remove_num_node_requests(request.user,orgAccountObj)
@@ -279,16 +280,16 @@ def clusterDestroy(request, pk):
                         messages.info(request,jrsp['msg'])
                     else:
                         messages.error(request,jrsp['error_msg'])           
-                    if clusterObj.cnnro_ids is not None:
-                        active_cnns = ClusterNumNode.objects.filter(id__in=clusterObj.cnnro_ids)
+                    if nodeGroupObj.cnnro_ids is not None:
+                        active_cnns = ClusterNumNode.objects.filter(id__in=nodeGroupObj.cnnro_ids)
                         if active_cnns.exists():
                             try:
                                 for active_cnn in active_cnns:
                                     active_cnn.delete()
-                                messages.info(request,"Successfully deleted active Cluster Num Node requests")
+                                messages.info(request,"Successfully deleted active Node Group Num Node requests")
                             except Exception as e:
                                 LOG.exception("caught exception:")
-                                messages.error(request, 'Error deleting active Cluster Num Node requests')
+                                messages.error(request, 'Error deleting active Node Group Num Node requests')
                     owner_ps_cmd = OwnerPSCmd.objects.create(user=request.user, org=orgAccountObj, ps_cmd='Destroy', create_time=datetime.now(timezone.utc))
                     owner_ps_cmd.save()
                     msg = f"Destroy {orgAccountObj.name} queued for processing"
@@ -298,11 +299,11 @@ def clusterDestroy(request, pk):
                 status = 500
                 LOG.exception("caught exception:")
                 messages.error(request, 'Error destroying cluster')
-        # GET just displays cluster_manage
-        LOG.info("redirect to org-manage-cluster")
+        # GET just displays node_group_manage
+        LOG.info("redirect to node-group-mange")
         for handler in LOG.handlers:
             handler.flush()
-        return redirect('org-manage-cluster',pk=orgAccountObj.id)
+        return redirect('node-group-mange',pk=orgAccountObj.id)
     else:
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
@@ -310,21 +311,21 @@ def clusterDestroy(request, pk):
 @login_required(login_url='account_login')
 @verified_email_required
 def clearNumNodesReqs(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    LOG.info(f"{request.user.username} {request.method} {clusterObj} <owner:{clusterObj.org.owner.username}>")
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    LOG.info(f"{request.user.username} {request.method} {nodeGroupObj} <owner:{nodeGroupObj.org.owner.username}>")
     LOG.info(f"request.POST:{request.POST} in group:{request.user.groups.filter(name='PS_Developer').exists()} is_owner:{orgAccountObj.owner == request.user}")
-    if request.user.groups.filter(name='PS_Developer').exists() or clusterObj.org.owner == request.user:
+    if request.user.groups.filter(name='PS_Developer').exists() or nodeGroupObj.org.owner == request.user:
         if request.method == 'POST':
-            jrsp = remove_num_node_requests(request.user,clusterObj)
+            jrsp = remove_num_node_requests(request.user,nodeGroupObj)
             if jrsp['status'] == 'SUCCESS':
                 messages.info(request,jrsp['msg'])
             else:
                 messages.error(request,jrsp['error_msg'])           
-        # GET just displays cluster_manage
-        LOG.info("redirect to org-manage-cluster")
+        # GET just displays node_group_manage
+        LOG.info("redirect to node-group-mange")
         for handler in LOG.handlers:
             handler.flush()
-        return redirect('org-manage-cluster',pk=clusterObj.id)
+        return redirect('node-group-mange',pk=nodeGroupObj.id)
     else:
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
@@ -332,47 +333,47 @@ def clearNumNodesReqs(request, pk):
 @login_required(login_url='account_login')
 @verified_email_required
 def clearActiveNumNodeReq(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    LOG.info(f"{request.user.username} {request.method} {clusterObj} <owner:{clusterObj.org.owner.username}>")
-    LOG.info(f"request.POST:{request.POST} in group:{request.user.groups.filter(name='PS_Developer').exists()} is_owner:{clusterObj.org.owner == request.user}")
-    if request.user.groups.filter(name='PS_Developer').exists() or clusterObj.org.owner == request.user:
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    LOG.info(f"{request.user.username} {request.method} {nodeGroupObj} <owner:{nodeGroupObj.org.owner.username}>")
+    LOG.info(f"request.POST:{request.POST} in group:{request.user.groups.filter(name='PS_Developer').exists()} is_owner:{nodeGroupObj.org.owner == request.user}")
+    if request.user.groups.filter(name='PS_Developer').exists() or nodeGroupObj.org.owner == request.user:
         if request.method == 'POST':
-            active_cnns = ClusterNumNode.objects.filter(id__in=clusterObj.cnnro_ids)
+            active_cnns = ClusterNumNode.objects.filter(id__in=nodeGroupObj.cnnro_ids)
             if active_cnns.exists():
                 for active_cnn in active_cnns:
                     active_cnn.delete()
-                messages.info(request,"Successfully deleted active Cluster Num Node requests")
+                messages.info(request,"Successfully deleted active Node Group Num Node requests")
             else:
-                messages.info(request,"No active Cluster Num Node request to delete")
-        return redirect('org-manage-cluster',pk=clusterObj.id)
+                messages.info(request,"No active Node Group Num Node request to delete")
+        return redirect('node-group-mange',pk=nodeGroupObj.id)
     else:
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
 
 @login_required(login_url='account_login')
 @verified_email_required
-def clusterConfigure(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
-    LOG.info(f"{request.method} {clusterObj}")
+def nodeGroupConfigure(request, pk):
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
+    LOG.info(f"{request.method} {nodeGroupObj}")
     updated = False
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
         if request.method == 'POST':
             try:
                 # USING an Unbound form and setting the object explicitly one field at a time!
-                config_form = ClusterCfgForm(request.POST, instance=clusterObj, available_versions=get_versions())
+                config_form = NodeGroupCfgForm(request.POST, instance=nodeGroupObj, available_versions=get_versions())
                 emsg = ''
                 if(config_form.is_valid()):
                     for field, value in config_form.cleaned_data.items():
                         LOG.info(f"Field: {field}, Value: {value}")
-                    LOG.info(f"{clusterObj} is_public:{clusterObj.is_public} version:{clusterObj.version} min_node_cap:{clusterObj.cfg_asg.min} max_node_cap:{clusterObj.cfg_asg.max} allow_deploy_by_token:{clusterObj.allow_deploy_by_token} destroy_when_no_nodes:{clusterObj.destroy_when_no_nodes}")
+                    LOG.info(f"{nodeGroupObj} is_public:{nodeGroupObj.is_public} version:{nodeGroupObj.version} min_node_cap:{nodeGroupObj.cfg_asg.min} max_node_cap:{nodeGroupObj.cfg_asg.max} allow_deploy_by_token:{nodeGroupObj.allow_deploy_by_token} destroy_when_no_nodes:{nodeGroupObj.destroy_when_no_nodes}")
                     config_form.save()
                     updated = True
-                    messages.success(request,f'{clusterObj} cfg updated successfully')
+                    messages.success(request,f'{nodeGroupObj} cfg updated successfully')
                 else:
                     emsg = f"Input Errors:{config_form.errors.as_text}"
                     messages.warning(request, emsg)
-                    LOG.info(f"Did not save cluster_config for {clusterObj} {emsg}")
+                    LOG.info(f"Did not save cluster_config for {nodeGroupObj} {emsg}")
                     LOG.info("These are the fields as submitted:")
                     for field, value in config_form.data.items():
                         LOG.info(f"Field: {field} - Value: {value}")            
@@ -383,19 +384,19 @@ def clusterConfigure(request, pk):
         try:
             if updated:
                 # Force the cluster env to be reinitialized
-                clusterObj.provision_env_ready = False
-                clusterObj.save()
-                LOG.info(f"saved clusterObj for clusterObj:{clusterObj.id} name:{clusterObj.name} is_public:{clusterObj.is_public} version:{clusterObj.version} ")
+                nodeGroupObj.provision_env_ready = False
+                nodeGroupObj.save()
+                LOG.info(f"saved nodeGroupObj for nodeGroupObj:{nodeGroupObj.id} name:{nodeGroupObj.name} is_public:{nodeGroupObj.is_public} version:{nodeGroupObj.version} ")
         except Exception as e:
             LOG.exception("caught exception:")
             emsg = "Server ERROR"
             messages.error(request, emsg)
 
-        LOG.info(f"{request.user.username} {request.method} name:{clusterObj} is_public:{clusterObj.is_public} version:{clusterObj.version} min_node_cap:{clusterObj.cfg_asg.min} max_node_cap:{clusterObj.cfg_asg.max} allow_deploy_by_token:{clusterObj.allow_deploy_by_token} destroy_when_no_nodes:{clusterObj.destroy_when_no_nodes}")
-        LOG.info("redirect to org-manage-cluster")
+        LOG.info(f"{request.user.username} {request.method} name:{nodeGroupObj} is_public:{nodeGroupObj.is_public} version:{nodeGroupObj.version} min_node_cap:{nodeGroupObj.cfg_asg.min} max_node_cap:{nodeGroupObj.cfg_asg.max} allow_deploy_by_token:{nodeGroupObj.allow_deploy_by_token} destroy_when_no_nodes:{nodeGroupObj.destroy_when_no_nodes}")
+        LOG.info("redirect to node-group-mange")
         for handler in LOG.handlers:
             handler.flush()
-        return redirect('org-manage-cluster',pk=clusterObj.id)
+        return redirect('node-group-mange',pk=nodeGroupObj.id)
     else:
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
@@ -416,14 +417,14 @@ def orgAccountHistory(request, pk):
 
 @login_required(login_url='account_login')
 @verified_email_required
-def clusterAccountHistory(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
-    LOG.info(f"{request.method} {clusterObj}")
+def nodeGroupAccountHistory(request, pk):
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
+    LOG.info(f"{request.method} {nodeGroupObj}")
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
-        cost_accounting_cluster(clusterObj)
+        cost_accounting_cluster(nodeGroupObj)
         context = {'org': orgAccountObj,'today': datetime.now()} # TBD do we need tz=timezone.utc ?
-        return render(request, 'users/cluster_account_history.html', context)
+        return render(request, 'users/node_group_account_history.html', context)
     else:
         messages.error(request,"Unauthorized access")
         return HttpResponse('Unauthorized', status=401)
@@ -456,15 +457,15 @@ def ajaxOrgAccountHistory(request):
 
 @login_required(login_url='account_login')
 @verified_email_required
-def ajaxClusterAccountHistory(request):
-    clusterObj = NodeGroup.objects.get(pk=request.GET.get("cluster_uuid", None))
-    orgAccountObj = clusterObj.org
+def ajaxNodeGroupAccountHistory(request):
+    nodeGroupObj = NodeGroup.objects.get(pk=request.GET.get("cluster_uuid", None))
+    orgAccountObj = nodeGroupObj.org
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
         if(request.headers.get('x-requested-with') == 'XMLHttpRequest') and (request.method == 'GET'):
             gran = request.GET.get("granularity", "undefined")
-            LOG.info(f' {clusterObj} {request.method} {request.GET.get("granularity", "undefined")}')
-            got_data, orgCostObj = get_db_cluster_cost(gran, clusterObj)
-            LOG.info(f"{clusterObj} crt:{orgCostObj.cost_refresh_time}")
+            LOG.info(f' {nodeGroupObj} {request.method} {request.GET.get("granularity", "undefined")}')
+            got_data, orgCostObj = get_db_cluster_cost(gran, nodeGroupObj)
+            LOG.info(f"{nodeGroupObj} crt:{orgCostObj.cost_refresh_time}")
             if got_data:
                 status = 200
                 context = {'ccr': orgCostObj.ccr,
@@ -474,7 +475,7 @@ def ajaxClusterAccountHistory(request):
                 context = {'ccr': {}}
             return JsonResponse(context, status=status)
         else:
-            LOG.warning(f"{request.method} {clusterObj} redirected to browse ")
+            LOG.warning(f"{request.method} {nodeGroupObj} redirected to browse ")
             return redirect('browse')
     else:
         messages.error(request,"Unauthorized access")
@@ -485,11 +486,11 @@ def ajaxClusterAccountHistory(request):
 @verified_email_required
 def orgAccountForecast(request, pk):
     orgAccountObj = OrgAccount.objects.get(pk)
-    clusterObj = NodeGroup.objects.get(org__name=orgAccountObj.name)
+    nodeGroupObj = NodeGroup.objects.get(org__name=orgAccountObj.name)
     LOG.info("%s %s", request.method, orgAccountObj.name)
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
         cost_accounting_org(orgAccountObj)
-        context = {'org': orgAccountObj, 'cluster':clusterObj}
+        context = {'org': orgAccountObj, 'cluster':nodeGroupObj}
         LOG.info('rendering org_account_forecast')
         return render(request, 'users/org_account_forecast.html', context)
     else:
@@ -498,15 +499,15 @@ def orgAccountForecast(request, pk):
 
 @login_required(login_url='account_login')
 @verified_email_required
-def clusterAccountForecast(request, pk):
-    clusterObj = NodeGroup.objects.get(id=pk)
-    orgAccountObj = clusterObj.org
-    LOG.info(f"{request.method} {clusterObj}")
+def nodeGroupAccountForecast(request, pk):
+    nodeGroupObj = NodeGroup.objects.get(id=pk)
+    orgAccountObj = nodeGroupObj.org
+    LOG.info(f"{request.method} {nodeGroupObj}")
     if request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user:
-        cost_accounting_cluster(clusterObj)
-        show_min_shutdown_date = (clusterObj.min_ddt <= (datetime.now(timezone.utc) + timedelta(days=DISPLAY_EXP_TM)))
-        show_cur_shutdown_date = (clusterObj.cur_ddt <= (datetime.now(timezone.utc) + timedelta(days=DISPLAY_EXP_TM)))
-        context = {'org': orgAccountObj, 'cluster':clusterObj, 'show_cur_shutdown_date': show_cur_shutdown_date, 'show_min_shutdown_date': show_min_shutdown_date}
+        cost_accounting_cluster(nodeGroupObj)
+        show_min_shutdown_date = (nodeGroupObj.min_ddt <= (datetime.now(timezone.utc) + timedelta(days=DISPLAY_EXP_TM)))
+        show_cur_shutdown_date = (nodeGroupObj.cur_ddt <= (datetime.now(timezone.utc) + timedelta(days=DISPLAY_EXP_TM)))
+        context = {'org': orgAccountObj, 'cluster':nodeGroupObj, 'show_cur_shutdown_date': show_cur_shutdown_date, 'show_min_shutdown_date': show_min_shutdown_date}
         LOG.info('rendering org_account_forecast')
         return render(request, 'users/org_account_forecast.html', context)
     else:
@@ -562,35 +563,35 @@ def ajaxOrgAccountForecast(request):
 
 @login_required(login_url='account_login')
 @verified_email_required
-def ajaxClusterAccountForecast(request):
+def ajaxNodeGroupAccountForecast(request):
     if(request.headers.get('x-requested-with') == 'XMLHttpRequest') and (request.method == 'GET'):
-        clusterObj = NodeGroup.objects.get(id=request.GET.get("cluster_uuid", None))
-        LOG.info(f"{request.method} {clusterObj} {request.GET.get('granularity', 'undefined')}")
+        nodeGroupObj = NodeGroup.objects.get(id=request.GET.get("cluster_uuid", None))
+        LOG.info(f"{request.method} {nodeGroupObj} {request.GET.get('granularity', 'undefined')}")
         gran = request.GET.get("granularity", "undefined")
         if gran == 'HOURLY':
-            fc_min = clusterObj.fc_min_hourly
-            fc_cur = clusterObj.fc_cur_hourly
-            fc_max = clusterObj.fc_max_hourly
-            br_min = clusterObj.min_hrly
-            br_cur = clusterObj.cur_hrly
-            br_max = clusterObj.max_hrly
-            got_data, clusterCostObj  = get_db_cluster_cost("HOURLY", clusterObj)
+            fc_min = nodeGroupObj.fc_min_hourly
+            fc_cur = nodeGroupObj.fc_cur_hourly
+            fc_max = nodeGroupObj.fc_max_hourly
+            br_min = nodeGroupObj.min_hrly
+            br_cur = nodeGroupObj.cur_hrly
+            br_max = nodeGroupObj.max_hrly
+            got_data, clusterCostObj  = get_db_cluster_cost("HOURLY", nodeGroupObj)
         elif gran == 'DAILY':
-            fc_min = clusterObj.fc_min_daily
-            fc_cur = clusterObj.fc_cur_daily
-            fc_max = clusterObj.fc_max_daily
-            br_min = clusterObj.min_hrly*24
-            br_cur = clusterObj.cur_hrly*24
-            br_max = clusterObj.max_hrly*24
-            got_data, clusterCostObj  = get_db_cluster_cost("DAILY", clusterObj)
+            fc_min = nodeGroupObj.fc_min_daily
+            fc_cur = nodeGroupObj.fc_cur_daily
+            fc_max = nodeGroupObj.fc_max_daily
+            br_min = nodeGroupObj.min_hrly*24
+            br_cur = nodeGroupObj.cur_hrly*24
+            br_max = nodeGroupObj.max_hrly*24
+            got_data, clusterCostObj  = get_db_cluster_cost("DAILY", nodeGroupObj)
         elif gran == 'MONTHLY':
-            fc_min = clusterObj.fc_min_monthly
-            fc_cur = clusterObj.fc_cur_monthly
-            fc_max = clusterObj.fc_max_monthly
-            br_min = clusterObj.min_hrly*24*30
-            br_cur = clusterObj.cur_hrly*24*30
-            br_max = clusterObj.max_hrly*24*30
-            got_data, clusterCostObj  = get_db_cluster_cost("MONTHLY", clusterObj)
+            fc_min = nodeGroupObj.fc_min_monthly
+            fc_cur = nodeGroupObj.fc_cur_monthly
+            fc_max = nodeGroupObj.fc_max_monthly
+            br_min = nodeGroupObj.min_hrly*24*30
+            br_cur = nodeGroupObj.cur_hrly*24*30
+            br_max = nodeGroupObj.max_hrly*24*30
+            got_data, clusterCostObj  = get_db_cluster_cost("MONTHLY", nodeGroupObj)
         if got_data:
             cost_refresh_time = clusterCostObj.cost_refresh_time
             cost_refresh_time_str = datetime.strftime(cost_refresh_time,"%Y-%m-%d %H:%M:%S %Z")
@@ -604,15 +605,17 @@ def ajaxClusterAccountForecast(request):
         #     context = {'cost': {}}
         return JsonResponse(context, status=status)
     else:
-        LOG.warning(f"{request.method} {clusterObj} redirected to browse")
+        LOG.warning(f"{request.method} {nodeGroupObj} redirected to browse")
         return redirect('browse')
+    
 @login_required(login_url='account_login')
 @verified_email_required
+@transaction.atomic
 def orgConfig(request, pk):
     try:
         orgAccountObj = OrgAccount.objects.get(id=pk)
         LOG.info(f"{request.method} {orgAccountObj.name}")
-        
+
         # Check user permissions
         if not (request.user.groups.filter(name='PS_Developer').exists() or orgAccountObj.owner == request.user):
             messages.warning(request, 'Insufficient privileges')
@@ -620,7 +623,6 @@ def orgConfig(request, pk):
             return redirect('browse')
 
         content_type = ContentType.objects.get_for_model(orgAccountObj)
-
 
         # Check if a related Budget already exists for the OrgAccount instance
         has_budget = Budget.objects.filter(content_type=content_type, object_id=orgAccountObj.id).exists()
@@ -630,29 +632,47 @@ def orgConfig(request, pk):
             Budget.objects.create(
                 content_type=content_type, 
                 object_id=orgAccountObj.id,
-                max_allowance=1000.0,  # or some other default value
-                monthly_allowance=10.0,  # or some other default value
-                balance=500.0  # or some other default value
+                max_allowance=0.0,
+                monthly_allowance=0.0,
+                balance=0.0
             )
 
+        node_groups = NodeGroup.objects.filter(org=orgAccountObj)
+        ng_formsets = []
+        # Initialization of NodeGroup formsets
         if request.method == "POST":
-            f = OrgAccountForm(request.POST, instance=orgAccountObj)
-            formset = BudgetFormSet(request.POST, instance=orgAccountObj)
-            
-            if f.is_valid() and formset.is_valid():
+            ng_formsets = [NodeGroupBudgetFormSet(request.POST, instance=node_group) for node_group in node_groups]
+        else:
+            ng_formsets = [NodeGroupBudgetFormSet(instance=node_group) for node_group in node_groups]
+
+        if request.method == "POST":
+            orgAccountForm = OrgAccountForm(request.POST, instance=orgAccountObj)
+            org_formset = ReadOnlyBudgetFormSet(request.POST, instance=orgAccountObj.budget.first())
+            all_node_groups_valid = all([ng_formset.is_valid() for ng_formset in ng_formsets])
+            if orgAccountForm.is_valid() and org_formset.is_valid() and all_node_groups_valid:
+                orgAccountObj.budget.monthly_allowance = sum([ng_formset.cleaned_data.get('monthly_allowance', 0) for ng_formset in ng_formsets])
+                orgAccountObj.budget.max_allowance = sum([ng_formset.cleaned_data.get('max_allowance', 0) for ng_formset in ng_formsets])
+                orgAccountObj.budget.balance = sum([ng_formset.cleaned_data.get('balance', 0) for ng_formset in ng_formsets])
+                orgAccountObj.budget.save()  # Save the changes to the budget
+                
+                for ng_formset in ng_formsets:
+                    ng_formset.save()
                 orgAccountObj.save()
-                formset.save()
+                org_formset.save()
+                
                 messages.success(request, f'Org Account {orgAccountObj.name} successfully saved')
                 LOG.info(f"Profile updated with point_of_contact_name:{orgAccountObj.point_of_contact_name} email:{orgAccountObj.email}")
-                return redirect('browse')  # Consider redirecting after a successful POST
             else:
-                LOG.error("Form error:%s", f.errors.as_text)
-                messages.warning(request, 'Error in form')
-        else:
-            f = OrgAccountForm(instance=orgAccountObj)
-            formset = BudgetFormSet(instance=orgAccountObj)
+                form_errors = orgAccountForm.errors.as_text() + " " + " ".join([ng_formset.errors.as_text() for ng_formset in ng_formsets])
+                LOG.error(f"Form error:{form_errors}")
+                messages.error(request, f'Errors in form: {form_errors}')
 
-        context = {'org': orgAccountObj, 'form': f, 'formset': formset}
+        # Initialize forms and formsets to reflect the summed values
+        orgAccountForm = OrgAccountForm(instance=orgAccountObj)
+        org_formset = ReadOnlyBudgetFormSet(instance=orgAccountObj.budget.first())  # Assuming orgAccountObj.budget is how you access the related budget object
+        ng_formsets = [NodeGroupBudgetFormSet(instance=node_group) for node_group in node_groups]
+        nodeGroupCreateForm = NodeGroupCreateForm()
+        context = {'orgAccountObj': orgAccountObj, 'orgAccountForm': orgAccountForm, "nodeGroupCreateForm":nodeGroupCreateForm, 'org_formset': org_formset, 'ng_formsets': ng_formsets}
         return render(request, 'users/org_config.html', context)
     except OrgAccount.DoesNotExist:
         messages.error(request, "Organization does not exist!")
@@ -719,28 +739,44 @@ def orgAccountDelete(request,pk):
 @verified_email_required
 @transaction.atomic
 # atomic ensures org and cluster and Cost are always created together
-def clusterCreate(request):
+def nodeGroupCreate(request,pk=None):
     try:
-        # User must be in the PS_Developer group or the owner to modify the profile
-        if request.user.groups.filter(name='PS_Developer').exists():
-            if request.method == 'POST':
-                form = ClusterForm(request.POST)
-                new_cluster,msg,emsg = add_cluster_cost(form,True)
-                if msg != '':
-                    messages.info(request,msg)
-                if emsg != '':
-                    messages.error(request,emsg)
-                return redirect('browse')
-            else:
-                form = ClusterCfgForm()
-                return render(request, 'users/cluster_create.html', {'form': form})
-        else:
+        orgId = pk        
+        # Fetch the Org object using orgId
+        orgAccountObj = OrgAccount.objects.get(id=orgId)  # Replace "Org" with your actual Org model's name
+        if not request.user.groups.filter(name='PS_Developer').exists():
             messages.warning(request, 'Insufficient privileges')
-            return redirect('browse')
+            if request.is_ajax():
+                return JsonResponse({'success': False, 'error': 'Insufficient privileges'})
+            return redirect('org-config')
+        
+        if request.method == 'POST':
+            form = NodeGroupCreateForm(request.POST)
+            form.instance.org = orgAccountObj
+            if form.is_valid():
+                new_node_group, msg, emsg = add_node_group_cost(form, True)
+            
+            if request.is_ajax():
+                if msg:
+                    return JsonResponse({'success': True, 'message': msg})
+                elif emsg:
+                    return JsonResponse({'success': False, 'error': emsg})
+            
+            if msg:
+                messages.info(request, msg)
+            if emsg:
+                messages.error(request, emsg)
+            return redirect('org-config')
+        else:
+            form = NodeGroupCfgForm()
+            return render(request, 'users/node_group_create.html', {'form': form})
+    
     except Exception as e:
         LOG.exception("caught exception:")
-        emsg = "Caught exception:"+repr(e)
+        emsg = "Caught exception: " + repr(e)
         messages.error(request, emsg)
+        if request.is_ajax():
+            return JsonResponse({'success': False, 'error': emsg})
         return redirect('browse')
 
 @login_required(login_url='account_login')
@@ -809,15 +845,15 @@ def browse(request):
                     else:    
                         found_m = False
                         pend = False
-                        #cluster_show_shutdown_date.update({o.name: (clusterObj.budget.min_ddt <= (datetime.now(timezone.utc) + timedelta(days=365)))})
+                        #cluster_show_shutdown_date.update({o.name: (nodeGroupObj.budget.min_ddt <= (datetime.now(timezone.utc) + timedelta(days=365)))})
                         if o.owner == active_user:
                             any_ownerships = True
                         user_is_owner_of_org.update({o.name: (o.owner == active_user)})
                         org_by_name.update({o.name: o})
                         clusters_in_org = NodeGroup.objects.filter(org__name=o.name)
                         clusters_by_org_name.update({o.name: clusters_in_org})
-                        for clusterObj in clusters_in_org:
-                            if clusterObj.is_public:
+                        for nodeGroupObj in clusters_in_org:
+                            if nodeGroupObj.is_public:
                                 org_has_public_cluster.update({o.name: True})
                         #LOG.info(f"number of memberships:{user_memberships.count()}")
                         for m in user_memberships:
@@ -833,8 +869,8 @@ def browse(request):
                         if not found_m:
                             has_priv_cluster = False
                             has_public_cluster = False
-                            for clusterObj in clusters_in_org:
-                                if clusterObj.is_public:
+                            for nodeGroupObj in clusters_in_org:
+                                if nodeGroupObj.is_public:
                                     has_public_cluster = True
                                 else:
                                     has_priv_cluster = True
@@ -897,9 +933,9 @@ def memberships(request):  # current session user
         if m.user.username.strip() == active_user.username.strip():
             displayed_memberships.append(m)
             o = OrgAccount.get(name=m.org.name)
-            clusterObj = NodeGroup.objects.get(org__name=o.name)
-            org_cluster_deployed_state.update({o.name: clusterObj.deployed_state})
-            org_cluster_active_ps_cmd.update({o.name: clusterObj.active_ps_cmd})
+            nodeGroupObj = NodeGroup.objects.get(org__name=o.name)
+            org_cluster_deployed_state.update({o.name: nodeGroupObj.deployed_state})
+            org_cluster_active_ps_cmd.update({o.name: nodeGroupObj.active_ps_cmd})
             user_is_owner_of_org.update({o.name: (o.owner == request.user)})
     #LOG.info(org_cluster_deployed_state)
 

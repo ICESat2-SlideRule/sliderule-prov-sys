@@ -7,9 +7,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.core import mail
-from users.forms import ClusterCfgForm,OrgAccountForm
+from users.forms import NodeGroupCfgForm,OrgAccountForm
 from users.models import OrgAccount,Membership,OwnerPSCmd,OrgAccount,ClusterNumNode,NodeGroup
-from users.views import add_org_cost,add_cluster_cost
+from users.views import add_org_cost,add_node_group_cost
 from datetime import timezone,datetime
 from datetime import date, datetime, timedelta, timezone, tzinfo
 import django.utils.timezone
@@ -179,7 +179,7 @@ def verify_api_user_makes_onn_ttl(client,orgAccountObj,user,password,desired_num
                                 orgAccountObj,
                                 datetime.now(timezone.utc),
                                 view_name='post-num-nodes-ttl',
-                                url_args=[orgAccountObj.name,clusterObj.name,desired_num_nodes,ttl_minutes],
+                                url_args=[orgAccountObj.name,nodeGroupObj.name,desired_num_nodes,ttl_minutes],
                                 access_token=access_token,
                                 data=None,
                                 loop_count=0,
@@ -345,14 +345,14 @@ def init_test_environ(  name=None,
     #new_clusterObj.cfg_asg.num = desired_num_nodes
     new_orgAccountObj.save()
 
-    cluster_form = ClusterCfgForm(data={
+    cluster_form = NodeGroupCfgForm(data={
         'org':new_orgAccountObj,
         'name': 'compute',
         'max_allowance':max_allowance,
         'monthly_allowance':monthly_allowance,
         'balance':balance})
     
-    new_clusterObj,msg,emsg,p = add_cluster_cost(cluster_form)  # this is atomic
+    new_clusterObj,msg,emsg,p = add_node_group_cost(cluster_form)  # this is atomic
     new_clusterObj.cfg_asg.min = min_node_cap
     new_clusterObj.cfg_asg.max = max_node_cap
     new_clusterObj.version = version
@@ -368,9 +368,9 @@ def init_test_environ(  name=None,
     this_logger.info("calling call_SetUp")
     assert(call_SetUp(new_orgAccountObj))
     assert(fake_sync_clusterObj_to_orgAccountObj(new_orgAccountObj))
-    clusterObj = NodeGroup.objects.get(org=new_orgAccountObj)
-    this_logger.info(f"org:{new_orgAccountObj.name} provision_env_ready:{clusterObj.provision_env_ready} clusterObj.cur_version:{clusterObj.cur_version} clusterObj.version:{new_clusterObj.version} ")       
-    assert clusterObj.cur_version == new_clusterObj.version
+    nodeGroupObj = NodeGroup.objects.get(org=new_orgAccountObj)
+    this_logger.info(f"org:{new_orgAccountObj.name} provision_env_ready:{nodeGroupObj.provision_env_ready} nodeGroupObj.cur_version:{nodeGroupObj.cur_version} nodeGroupObj.version:{new_clusterObj.version} ")       
+    assert nodeGroupObj.cur_version == new_clusterObj.version
     return new_orgAccountObj,new_orgAccountObj.owner
 
 
@@ -447,8 +447,8 @@ def pytest_approx(val1,val2):
     return pytest.approx(val1,abs=1e-9)==pytest.approx(val2,abs=1e-9)
 
 
-def getClusterObjCnts(clusterObj):
-    return  clusterObj.num_onn, clusterObj.num_owner_ps_cmd, clusterObj.num_ps_cmd, clusterObj.num_setup_cmd, clusterObj.num_ps_cmd_successful, clusterObj.num_setup_cmd_successful,
+def getClusterObjCnts(nodeGroupObj):
+    return  nodeGroupObj.num_onn, nodeGroupObj.num_owner_ps_cmd, nodeGroupObj.num_ps_cmd, nodeGroupObj.num_setup_cmd, nodeGroupObj.num_ps_cmd_successful, nodeGroupObj.num_setup_cmd_successful,
 
 
 def getObjectCnts():
@@ -479,7 +479,7 @@ def process_onn_api(client,
     
     s_OwnerPSCmd_cnt = OwnerPSCmd.objects.count()
     s_OrgNumNode_cnt = ClusterNumNode.objects.count()
-    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(clusterObj)
+    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(nodeGroupObj)
     logger.info(f"using s_OrgNumNode_cnt:{s_OrgNumNode_cnt} s_OwnerPSCmd_cnt:{s_OwnerPSCmd_cnt} s_orgAccountObj_num_onn:{s_orgAccountObj_num_onn} s_orgAccountObj_num_owner_ps_cmd:{s_orgAccountObj_num_owner_ps_cmd} s_orgAccountObj_num_ps_cmd:{s_orgAccountObj_num_ps_cmd} s_orgAccountObj_num_setup_cmd:{s_orgAccountObj_num_setup_cmd} s_orgAccountObj_num_ps_cmd_successful:{s_orgAccountObj_num_ps_cmd_successful} s_orgAccountObj_num_setup_cmd_successful:{s_orgAccountObj_num_setup_cmd_successful}")
     logger.info(f"using new_time: {new_time.strftime(FMT) if new_time is not None else 'None'}")
     with time_machine.travel(new_time,tick=True):
@@ -503,33 +503,33 @@ def process_onn_api(client,
                 assert((response.status_code == expected_html_status) or (response.status_code == 302)) 
                 if expected_status != 'FAILED':
                     expected_num_onn_change = 1 # if we get here we expect a change
-        clusterObj.refresh_from_db()    # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db()    # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this       
         assert(OwnerPSCmd.objects.count() == s_OwnerPSCmd_cnt) # url was an cnn api not an owner ps cmd, so no change
         assert(ClusterNumNode.objects.count() == (s_OrgNumNode_cnt + expected_num_onn_change))
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) # no change just queued
-        assert(clusterObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd) # no change just queued
-        assert(clusterObj.num_onn == s_orgAccountObj_num_onn) # no change just queued
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) # no change just queued
+        assert(nodeGroupObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd) # no change just queued
+        assert(nodeGroupObj.num_onn == s_orgAccountObj_num_onn) # no change just queued
         num=0
         task_idle = True
         for _ in range(num_iters):
             num = num + 1
-            idle, loop_count = loop_iter(clusterObj,loop_count)
+            idle, loop_count = loop_iter(nodeGroupObj,loop_count)
             if not idle:
                 task_idle = False
         assert(num==num_iters)
-        clusterObj.refresh_from_db()    # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db()    # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd)
-        assert(clusterObj.num_ps_cmd == (s_orgAccountObj_num_ps_cmd + expected_change_ps_cmd)) # processed an update ps_cmd
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd)
+        assert(nodeGroupObj.num_ps_cmd == (s_orgAccountObj_num_ps_cmd + expected_change_ps_cmd)) # processed an update ps_cmd
         assert(task_idle==(expected_change_ps_cmd==0)),f"task_idle:{task_idle} expected_change_ps_cmd:{expected_change_ps_cmd}"
         if num_iters==0:
-            assert(clusterObj.num_onn==s_orgAccountObj_num_onn)
+            assert(nodeGroupObj.num_onn==s_orgAccountObj_num_onn)
             assert(loop_count == s_loop_count)
-            assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd)
+            assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd)
         else:
-            logger.info(f"expected_org_account_num_cnn_change:{expected_org_account_num_cnn_change} clusterObj.cfg_asg.min:{clusterObj.cfg_asg.min} clusterObj.cfg_asg.num:{clusterObj.cfg_asg.num}")
-            assert(clusterObj.num_onn==(s_orgAccountObj_num_onn + expected_org_account_num_cnn_change))
+            logger.info(f"expected_org_account_num_cnn_change:{expected_org_account_num_cnn_change} nodeGroupObj.cfg_asg.min:{nodeGroupObj.cfg_asg.min} nodeGroupObj.cfg_asg.num:{nodeGroupObj.cfg_asg.num}")
+            assert(nodeGroupObj.num_onn==(s_orgAccountObj_num_onn + expected_org_account_num_cnn_change))
             assert(loop_count == (s_loop_count + num_iters))
     return loop_count,response
 
@@ -549,7 +549,7 @@ def process_owner_ps_cmd(client,
         EXPECTED_PS_CMD_PROCESSED = 1
     
     s_OwnerPSCmd_cnt,s_OrgNumNode_cnt = getObjectCnts()
-    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(clusterObj)
+    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(nodeGroupObj)
     logger.info(f"using new_time:{new_time.strftime(FMT)}") 
     with time_machine.travel(new_time,tick=True):
         response = client.post(url,data=data, HTTP_ACCEPT='application/json')
@@ -559,27 +559,27 @@ def process_owner_ps_cmd(client,
         # logger.info(f"Response status code: {response.status_code}")
         # logger.info(f"Response content: {response.content}")
         # logger.info(f"Response headers: {response.headers}")        # json_data = json.loads(response.content)
-        clusterObj.refresh_from_db()    # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db()    # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         assert(OwnerPSCmd.objects.count() == s_OwnerPSCmd_cnt + 1) # url was an owner ps_cmd always increments
         assert(ClusterNumNode.objects.count() == (s_OrgNumNode_cnt))
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) # only changes after we do a loop_iter 
-        assert(clusterObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd) # only changes after we do a loop_iter 
-        assert(clusterObj.num_onn == s_orgAccountObj_num_onn) # no change 
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_onn == s_orgAccountObj_num_onn) # no change 
         num=0
         for _ in range(num_iters):
             num = num + 1
-            task_idle, loop_count = loop_iter(clusterObj,loop_count)
+            task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
         assert(num==num_iters)
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd + EXPECTED_PS_CMD_PROCESSED) # only changes if we did a loop_iter else no change just queued
-        assert(clusterObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd + EXPECTED_PS_CMD_PROCESSED) # only changes if we did a loop_iter else no change just queued
-        assert(clusterObj.num_onn==s_orgAccountObj_num_onn)
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd + EXPECTED_PS_CMD_PROCESSED) # only changes if we did a loop_iter else no change just queued
+        assert(nodeGroupObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd + EXPECTED_PS_CMD_PROCESSED) # only changes if we did a loop_iter else no change just queued
+        assert(nodeGroupObj.num_onn==s_orgAccountObj_num_onn)
         assert(loop_count == s_loop_count+num_iters)
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd + EXPECTED_PS_CMD_PROCESSED)
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd + EXPECTED_PS_CMD_PROCESSED)
     return loop_count
 
 
-def process_cluster_configure(client,
+def process_node_group_configure(client,
                             orgAccountObj,
                             new_time,
                             view_name,
@@ -596,7 +596,7 @@ def process_cluster_configure(client,
         EXPECTED_PS_CMD_PROCESSED = expected_change_ps_cmd # SetUp and Refresh/Update
     
     s_OwnerPSCmd_cnt,s_OrgNumNode_cnt = getObjectCnts()
-    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(clusterObj)
+    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(nodeGroupObj)
     logger.info(f"using new_time:{new_time.strftime(FMT)}") 
     with time_machine.travel(new_time,tick=True):
         response = client.post(url,data=data, HTTP_ACCEPT='application/json')
@@ -607,24 +607,24 @@ def process_cluster_configure(client,
         # logger.info(f"Response content: {response.content}")
         # logger.info(f"Response headers: {response.headers}")        
         # # json_data = json.loads(response.content)
-        clusterObj.refresh_from_db()    # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db()    # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         assert(OwnerPSCmd.objects.count() == s_OwnerPSCmd_cnt) 
         assert(ClusterNumNode.objects.count() == (s_OrgNumNode_cnt))
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) # only changes after we do a loop_iter 
-        assert(clusterObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd) # only changes after we do a loop_iter 
-        assert(clusterObj.num_ps_cmd_successful == s_orgAccountObj_num_ps_cmd_successful) # only changes after we do a loop_iter 
-        assert(clusterObj.num_setup_cmd == s_orgAccountObj_num_setup_cmd) # only changes after we do a loop_iter 
-        assert(clusterObj.num_setup_cmd_successful == s_orgAccountObj_num_setup_cmd_successful) # only changes after we do a loop_iter 
-        assert(clusterObj.num_onn == s_orgAccountObj_num_onn) # no change 
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_ps_cmd_successful == s_orgAccountObj_num_ps_cmd_successful) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_setup_cmd == s_orgAccountObj_num_setup_cmd) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_setup_cmd_successful == s_orgAccountObj_num_setup_cmd_successful) # only changes after we do a loop_iter 
+        assert(nodeGroupObj.num_onn == s_orgAccountObj_num_onn) # no change 
         num=0
         for _ in range(num_iters):
             num = num + 1
-            task_idle, loop_count = loop_iter(clusterObj,loop_count)
+            task_idle, loop_count = loop_iter(nodeGroupObj,loop_count)
         assert(num==num_iters)
-        assert(clusterObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) 
-        assert(clusterObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd + EXPECTED_PS_CMD_PROCESSED) # only changes if we did a loop_iter else no change just queued
-#        assert(clusterObj.num_onn==s_orgAccountObj_num_onn)
+        assert(nodeGroupObj.num_owner_ps_cmd == s_orgAccountObj_num_owner_ps_cmd) 
+        assert(nodeGroupObj.num_ps_cmd == s_orgAccountObj_num_ps_cmd + EXPECTED_PS_CMD_PROCESSED) # only changes if we did a loop_iter else no change just queued
+#        assert(nodeGroupObj.num_onn==s_orgAccountObj_num_onn)
         assert(loop_count == s_loop_count+num_iters)
     return loop_count
 
@@ -685,24 +685,24 @@ def process_onn_expires(orgAccountObj,
     logger.info(f"using new_time:{new_time.strftime(FMT)}") 
     
     s_OwnerPSCmd_cnt,s_OrgNumNode_cnt = getObjectCnts()
-    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(clusterObj)
+    s_orgAccountObj_num_onn, s_orgAccountObj_num_owner_ps_cmd, s_orgAccountObj_num_ps_cmd, s_orgAccountObj_num_setup_cmd, s_orgAccountObj_num_ps_cmd_successful, s_orgAccountObj_num_setup_cmd_successful  = getClusterObjCnts(nodeGroupObj)
 
     with time_machine.travel(new_time,tick=True):
         logger.info(f"changed time to:{datetime.now(timezone.utc).strftime(FMT)}")
-        clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+        nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         
         for _ in range(num_iters):
-            task_idle, f_loop_count = loop_iter(clusterObj,s_loop_count)
-        clusterObj.refresh_from_db() # The client.post above updated the DB so we need this
+            task_idle, f_loop_count = loop_iter(nodeGroupObj,s_loop_count)
+        nodeGroupObj.refresh_from_db() # The client.post above updated the DB so we need this
         orgAccountObj.refresh_from_db() # The client.post above updated the DB so we need this
         assert(f_loop_count==(s_loop_count+1))
         assert(OwnerPSCmd.objects.count()==s_OwnerPSCmd_cnt)
         assert(ClusterNumNode.objects.count()==(s_OrgNumNode_cnt + expected_change_OrgNumNode))
-        assert(clusterObj.num_owner_ps_cmd==s_orgAccountObj_num_owner_ps_cmd)
-        assert(clusterObj.num_onn==(s_orgAccountObj_num_onn+expected_change_num_onn))
-        assert(clusterObj.num_ps_cmd==(s_orgAccountObj_num_ps_cmd+expected_change_ps_cmd)) # processed an update ps_cmd
-        assert(clusterObj.cfg_asg.num==expected_desired_num_nodes)
+        assert(nodeGroupObj.num_owner_ps_cmd==s_orgAccountObj_num_owner_ps_cmd)
+        assert(nodeGroupObj.num_onn==(s_orgAccountObj_num_onn+expected_change_num_onn))
+        assert(nodeGroupObj.num_ps_cmd==(s_orgAccountObj_num_ps_cmd+expected_change_ps_cmd)) # processed an update ps_cmd
+        assert(nodeGroupObj.cfg_asg.num==expected_desired_num_nodes)
     return f_loop_count
 
 def init_mock_ps_server(name=None,num_nodes=None):
@@ -770,17 +770,17 @@ def process_rsp_gen(rrsp_gen, name, ps_cmd,  logger):
                 got_rsp_done = True
     return cnt, got_rsp_done, stop_exception_cnt, exception_cnt, ps_error_cnt, stdout, stderr
 
-def call_SetUp(clusterObj):
-    assert(clusterObj != None)
-    clusterObj.provision_env_ready = False
-    clusterObj.save()
-    setup_req = ps_server_pb2.SetUpReq(name=clusterObj.org.name,cluster_name=clusterObj.name,version=clusterObj.version,is_public=clusterObj.is_public,now=datetime.now(timezone.utc).strftime(FMT))
+def call_SetUp(nodeGroupObj):
+    assert(nodeGroupObj != None)
+    nodeGroupObj.provision_env_ready = False
+    nodeGroupObj.save()
+    setup_req = ps_server_pb2.SetUpReq(name=nodeGroupObj.org.name,cluster_name=nodeGroupObj.name,version=nodeGroupObj.version,is_public=nodeGroupObj.is_public,now=datetime.now(timezone.utc).strftime(FMT))
     logger.info(f"SetUp setup_req:{setup_req}")
     rsp = None
     with ps_client.create_client_channel("control") as channel:
         stub = ps_server_pb2_grpc.ControlStub(channel)
         rrsp_gen = stub.SetUp(setup_req)
-        cnt, got_rsp_done, stop_exception_cnt, exception_cnt, ps_error_cnt, stdout, stderr = process_rsp_gen(rrsp_gen,clusterObj.org.name,clusterObj.name,'SetUp',logger)
+        cnt, got_rsp_done, stop_exception_cnt, exception_cnt, ps_error_cnt, stdout, stderr = process_rsp_gen(rrsp_gen,nodeGroupObj.org.name,nodeGroupObj.name,'SetUp',logger)
         logger.info(f"SetUp cnt:{cnt} got_rsp_done:{got_rsp_done} stop_exception_cnt:{stop_exception_cnt} exception_cnt:{exception_cnt} ps_error_cnt:{ps_error_cnt} stdout:{stdout} stderr:{stderr}")   
         assert(got_rsp_done == True)
         assert(stop_exception_cnt == 0)
@@ -789,7 +789,7 @@ def call_SetUp(clusterObj):
         assert(f"{setup_req.name}" in stdout)
         assert(stderr == '')
         logger.info(f"SetUp stdout:{stdout}")
-        rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=clusterObj.org.name,cluster_name=clusterObj.name))
+        rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=nodeGroupObj.org.name,cluster_name=nodeGroupObj.name))
         logger.info(f"GetCurrentSetUpCfg rsp:{rsp}")
     assert(rsp is not None)
     assert(rsp.setup_cfg.name == setup_req.name)
@@ -799,20 +799,20 @@ def call_SetUp(clusterObj):
     assert(rsp.setup_cfg.now == setup_req.now)
     return True
 
-def fake_sync_clusterObj_to_orgAccountObj(clusterObj):
+def fake_sync_clusterObj_to_orgAccountObj(nodeGroupObj):
     '''
         put in quiescent state
     '''
-    logger.info(f"fake_sync_clusterObj_to_orgAccountObj clusterObj:{clusterObj}")
+    logger.info(f"fake_sync_clusterObj_to_orgAccountObj nodeGroupObj:{nodeGroupObj}")
     with ps_client.create_client_channel("control") as channel:
         stub = ps_server_pb2_grpc.ControlStub(channel)
         rsp = stub.GetCurrentSetUpCfg(ps_server_pb2.GetCurrentSetUpCfgReq(name=orgAccountObj.name))
-    assert rsp.setup_cfg.name == clusterObj.org.name
-    assert rsp.setup_cfg.cluster_name == clusterObj.name
-    assert rsp.setup_cfg.version == clusterObj.version
-    assert rsp.setup_cfg.is_public == clusterObj.is_public    
-    clusterObj.provision_env_ready = True
-    clusterObj.is_public = clusterObj.is_public
-    clusterObj.cur_version = clusterObj.version
-    clusterObj.save()
+    assert rsp.setup_cfg.name == nodeGroupObj.org.name
+    assert rsp.setup_cfg.cluster_name == nodeGroupObj.name
+    assert rsp.setup_cfg.version == nodeGroupObj.version
+    assert rsp.setup_cfg.is_public == nodeGroupObj.is_public    
+    nodeGroupObj.provision_env_ready = True
+    nodeGroupObj.is_public = nodeGroupObj.is_public
+    nodeGroupObj.cur_version = nodeGroupObj.version
+    nodeGroupObj.save()
     return True
