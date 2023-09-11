@@ -10,7 +10,6 @@ from django.urls import path
 from . import views
 from django.conf import settings
 from django.views.generic.base import TemplateView
-from django.contrib.sites.models import Site
 
 import os
 import logging
@@ -32,6 +31,7 @@ urlpatterns = [
      path('node_group_destroy/<str:pk>/', views.nodeGroupDestroy, name="node-group-destroy"),
      path('node_group_manage/<str:pk>/', views.nodeGroupManage, name="node-group-mange"),
      path('node_group_configure/<str:pk>/', views.nodeGroupConfigure, name="node-group-configure"),
+     path('node_group_types/', views.nodeGroupTypes, name="node-group-types"),
      path('node_group_refresh/<str:pk>/', views.nodeGroupRefresh, name="node-group-refresh"),
      path('node_group_account_forecast/<str:pk>/', views.nodeGroupAccountForecast, name="node-group-account-forecast"),
      path('node_group_account_history/<str:pk>/', views.nodeGroupAccountHistory, name="node-group-account-history"),
@@ -58,10 +58,3 @@ LOG.info("settings.ALLOWED_HOSTS:%s",settings.ALLOWED_HOSTS)
 LOG.info("settings.CSRF_TRUSTED_ORIGINS:%s",settings.CSRF_TRUSTED_ORIGINS)
 LOG.info("settings.LOGGING.handlers.console.level:%s",settings.LOGGING['handlers']['console']['level'])
 LOG.info(f"settings.SITE_ID:{settings.SITE_ID} {type(settings.SITE_ID)} must match one of the following site[n].id ...")
-ndx = 0
-try:
-     for site in Site.objects.all():
-          LOG.info(f"site[{ndx}] id:{site.id} {type(site.id)} name:{site.name} domain:{site.domain}")
-          ndx = ndx+1
-except Exception as e:
-     LOG.exception("caught exception:")

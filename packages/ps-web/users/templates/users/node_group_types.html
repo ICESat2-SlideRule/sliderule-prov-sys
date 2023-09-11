@@ -1,0 +1,57 @@
+{% extends 'main.html' %}
+{% load crispy_forms_tags %}
+
+{% load i18n %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <div class="col py-2 text-center"> 
+            <div class="card shadow mx-auto d-block" style="max-width: fit-content;"> 
+                <div class="card-header text-center">
+                    <h2>Node Group Types</h2>
+                </div>
+                <div class="card-body">
+                    <div class="auto-scroll-x-y">
+                        <form class="form" action="" method="post">
+                            {% csrf_token %}
+                            {{ nodeGroupTypeCreateFormSet.management_form|crispy }}
+                            
+                            <table class="table table-bordered">
+                                <thead class="thead-dark">
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Description</th>
+                                        <th title="Fixed cost in dollars per hour">Fixed Cost</th>
+                                        <th title="Hourly cost per node instance">Per Node Cost</th>
+                                        <th>Delete</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for form in nodeGroupTypeCreateFormSet %}
+                                    <tr {% if forloop.last %}class="bg-light"{% endif %}>
+                                        <td>{{ form.name }}</td>
+                                        <td>{{ form.description }}</td>
+                                        <td>{{ form.node_mgnt_fixed_cost }}</td>
+                                        <td>{{ form.per_node_cost_per_hr }}</td>
+                                        <td>{{ form.DELETE }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            
+                            <div class="d-flex justify-content-center mt-3">
+                                <button type="button" class="btn btn-secondary mr-2" onclick="history.back()">Back</button>
+                                <button type="submit" class="btn btn-primary">Save Changes</button>
+                            </div>
+                                                    </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock content %}
+{% block javascript %}
+{% endblock javascript %}

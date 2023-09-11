@@ -19,8 +19,8 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.db.transaction import get_autocommit
-from .models import NodeGroup, GranChoice, OrgAccount, Cost, Membership, User, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget
-from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgAccountForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,BudgetForm,ReadOnlyBudgetFormSet,NodeGroupBudgetFormSet
+from .models import NodeGroup, NodeGroupType, GranChoice, OrgAccount, Cost, Membership, User, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget
+from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgAccountForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,BudgetForm,ReadOnlyBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeCreateFormSet
 from .utils import get_db_cluster_cost,add_org_cost,add_node_group_cost
 from .tasks import get_versions, update_burn_rates, getGranChoice, sort_CNN_by_nn_exp,forever_loop_main_task,get_node_group_queue_name,remove_num_node_requests,get_PROVISIONING_DISABLED,set_PROVISIONING_DISABLED,process_num_nodes_api
 from django.core.mail import send_mail
@@ -90,6 +90,40 @@ def send_activation_email(request, orgname, user):
     except Exception as e:
         LOG.exception('Exception caught when sending activation email')
         messages.error(request, 'INTERNAL ERROR; FAILED to send activation email')
+
+    
+@login_required(login_url='account_login')
+@verified_email_required
+@transaction.atomic
+def nodeGroupTypes(request):
+    try:
+        if request.method == "POST":
+            nodeGroupTypeCreateFormSet = NodeGroupTypeCreateFormSet(request.POST, queryset=NodeGroupType.objects.all())
+            if nodeGroupTypeCreateFormSet.is_valid():
+                lenOfForms = len(list(nodeGroupTypeCreateFormSet))
+                for form in nodeGroupTypeCreateFormSet:
+                    if form.has_changed() or lenOfForms==1:
+                        if form.cleaned_data.get('DELETE'):
+                            form.instance.delete()
+                            LOG.info("form deleted")
+                        else:
+                            form.save()
+                            LOG.info("form saved")
+                        messages.success(request, "Node Group Types successfully updated")
+                    else:
+                        LOG.info("form has not changed")
+                        messages.info(request, "Node Group Types NOT updated")
+            else:
+                messages.error(request, "Node Group Types NOT updated")
+        else:
+            nodeGroupTypeCreateFormSet = NodeGroupTypeCreateFormSet(queryset=NodeGroupType.objects.all())
+        context = {'nodeGroupTypeCreateFormSet': nodeGroupTypeCreateFormSet}
+        return render(request, 'users/node_group_types.html', context)
+    except Exception as e:
+        LOG.exception("Caught unexpected exception")
+        messages.error(request, f"Unexpected error: {repr(e)}")    
+    return redirect('browse')
+
 
 @login_required(login_url='account_login')
 @verified_email_required
@@ -637,42 +671,38 @@ def orgConfig(request, pk):
                 balance=0.0
             )
 
-        node_groups = NodeGroup.objects.filter(org=orgAccountObj)
-        ng_formsets = []
         # Initialization of NodeGroup formsets
         if request.method == "POST":
-            ng_formsets = [NodeGroupBudgetFormSet(request.POST, instance=node_group) for node_group in node_groups]
+            nodeGroupCreateFormSet = NodeGroupCreateFormSet(request.POST, queryset=NodeGroup.objects.filter(org=orgAccountObj))
         else:
-            ng_formsets = [NodeGroupBudgetFormSet(instance=node_group) for node_group in node_groups]
+            nodeGroupCreateFormSet = NodeGroupCreateFormSet(queryset=NodeGroup.objects.filter(org=orgAccountObj))
 
         if request.method == "POST":
             orgAccountForm = OrgAccountForm(request.POST, instance=orgAccountObj)
-            org_formset = ReadOnlyBudgetFormSet(request.POST, instance=orgAccountObj.budget.first())
-            all_node_groups_valid = all([ng_formset.is_valid() for ng_formset in ng_formsets])
-            if orgAccountForm.is_valid() and org_formset.is_valid() and all_node_groups_valid:
-                orgAccountObj.budget.monthly_allowance = sum([ng_formset.cleaned_data.get('monthly_allowance', 0) for ng_formset in ng_formsets])
-                orgAccountObj.budget.max_allowance = sum([ng_formset.cleaned_data.get('max_allowance', 0) for ng_formset in ng_formsets])
-                orgAccountObj.budget.balance = sum([ng_formset.cleaned_data.get('balance', 0) for ng_formset in ng_formsets])
+            orgForm = ReadOnlyBudgetForm(instance=orgAccountObj.budget.first())
+            all_node_groups_valid = all([ng_create_formset.is_valid() for ng_create_formset in nodeGroupCreateFormSet])
+            if orgAccountForm.is_valid() and all_node_groups_valid:
+                orgAccountObj.budget.monthly_allowance = sum([ng_create_formset.cleaned_data.get('monthly_allowance', 0) for ng_create_formset in nodeGroupCreateFormSet])
+                orgAccountObj.budget.max_allowance = sum([ng_create_formset.cleaned_data.get('max_allowance', 0) for ng_create_formset in nodeGroupCreateFormSet])
+                orgAccountObj.budget.balance = sum([ng_create_formset.cleaned_data.get('balance', 0) for ng_create_formset in nodeGroupCreateFormSet])
                 orgAccountObj.budget.save()  # Save the changes to the budget
                 
-                for ng_formset in ng_formsets:
-                    ng_formset.save()
+                for ng_create_formset in nodeGroupCreateFormSet:
+                    ng_create_formset.save()
                 orgAccountObj.save()
-                org_formset.save()
                 
                 messages.success(request, f'Org Account {orgAccountObj.name} successfully saved')
                 LOG.info(f"Profile updated with point_of_contact_name:{orgAccountObj.point_of_contact_name} email:{orgAccountObj.email}")
             else:
-                form_errors = orgAccountForm.errors.as_text() + " " + " ".join([ng_formset.errors.as_text() for ng_formset in ng_formsets])
+                form_errors = orgAccountForm.errors.as_text() + " " + " ".join([ng_create_formset.errors.as_text() for ng_create_formset in nodeGroupCreateFormSet])
                 LOG.error(f"Form error:{form_errors}")
                 messages.error(request, f'Errors in form: {form_errors}')
 
         # Initialize forms and formsets to reflect the summed values
         orgAccountForm = OrgAccountForm(instance=orgAccountObj)
-        org_formset = ReadOnlyBudgetFormSet(instance=orgAccountObj.budget.first())  # Assuming orgAccountObj.budget is how you access the related budget object
-        ng_formsets = [NodeGroupBudgetFormSet(instance=node_group) for node_group in node_groups]
+        orgForm = ReadOnlyBudgetForm(instance=orgAccountObj.budget.first())
         nodeGroupCreateForm = NodeGroupCreateForm()
-        context = {'orgAccountObj': orgAccountObj, 'orgAccountForm': orgAccountForm, "nodeGroupCreateForm":nodeGroupCreateForm, 'org_formset': org_formset, 'ng_formsets': ng_formsets}
+        context = {'orgAccountObj': orgAccountObj, 'orgAccountForm': orgAccountForm, "nodeGroupCreateForm": nodeGroupCreateForm, 'orgForm':orgForm, 'nodeGroupCreateFormSet': nodeGroupCreateFormSet}
         return render(request, 'users/org_config.html', context)
     except OrgAccount.DoesNotExist:
         messages.error(request, "Organization does not exist!")
@@ -768,7 +798,7 @@ def nodeGroupCreate(request,pk=None):
                 messages.error(request, emsg)
             return redirect('org-config')
         else:
-            form = NodeGroupCfgForm()
+            form = NodeGroupCreateForm()
             return render(request, 'users/node_group_create.html', {'form': form})
     
     except Exception as e:

@@ -2,9 +2,11 @@ from django import forms
 from django.forms import ModelForm
 from django.contrib.auth.forms import UserCreationForm, UsernameField, UserChangeForm
 from django.forms import BaseInlineFormSet
+from django.forms import modelformset_factory
+from django.forms import ModelForm, IntegerField
 
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
-from .models import Membership, OrgAccount, NodeGroup, User, ClusterNumNode, ASGNodeLimits, Budget
+from .models import Membership, OrgAccount, NodeGroup, NodeGroupType, User, ClusterNumNode, ASGNodeLimits, Budget
 from captcha.fields import CaptchaField
 from datetime import datetime,timedelta
 from datetime import timezone
@@ -109,14 +111,72 @@ class BudgetForm(forms.ModelForm):
         model = Budget
         fields = ['max_allowance', 'monthly_allowance', 'balance']
 
+
+class NodeGroupTypeCreateForm(ModelForm):
+    '''
+        For creating a new Node Group Type
+    '''
+    class Meta:
+        model = NodeGroupType
+        fields = '__all__'
+    # def __init__(self, *args, **kwargs):
+    #     super(NodeGroupTypeCreateForm, self).__init__(*args, **kwargs)
+    #     # Exclude null options from the type field's queryset
+    #     self.fields['type'].queryset = self.fields['type'].queryset.exclude(pk__isnull=True)
+
+NodeGroupTypeCreateFormSet = modelformset_factory(
+    model=NodeGroupType, 
+    form=NodeGroupTypeCreateForm, 
+    extra=1, # You can adjust this number if you need to display more than one empty form for adding new NodeGroups
+    can_delete=True  # If you want to allow deleting node groups through the formset
+)
+
 class NodeGroupCreateForm(ModelForm):
     '''
         For creating a new Node Group
     '''
+    cfg_asg_min = IntegerField(label="Min", initial=ASGNodeLimits.MIN_NODES)
+    cfg_asg_max = IntegerField(label="Max", initial=ASGNodeLimits.DEF_ADMIN_MAX_NODES)
+    budget_max_allowance = IntegerField(label="Budget Max Allowance", initial=Budget.DEF_MAX_ALLOWANCE)
+    budget_monthly_allowance = IntegerField(label="Budget Monthly Allowance", initial=Budget.DEF_MONTHLY_ALLOWANCE) 
+    budget_balance = IntegerField(label="Budget Balance", initial=Budget.DEF_BALANCE)
     class Meta:
         model = NodeGroup
-        fields = [ 'name', 'node_mgr_fixed_cost', 'node_fixed_cost']
+        fields = ['name', 'type', 'budget_balance', 'budget_max_allowance', 'budget_monthly_allowance', 'cfg_asg_min', 'cfg_asg_max']
         readonly_fields = ['org']
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        
+        # assuming you're using the instance right after saving
+        if commit:
+            instance.save()
+            
+            # Create the related ASGNodeLimits instance
+            asg_limits = ASGNodeLimits(
+                num=self.cleaned_data['cfg_asg_num'],
+                min=self.cleaned_data['cfg_asg_min'],
+                max=self.cleaned_data['cfg_asg_max'],
+                content_object=instance
+            )
+            asg_limits.save()
+        
+            # Create the related Budget instance
+            budget = Budget(
+                max_allowance=self.cleaned_data['budget_max_allowance'],
+                monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
+                balance=self.cleaned_data['budget_balance'],
+                content_object=instance
+            )
+            budget.save()
+        return instance
+
+NodeGroupCreateFormSet = modelformset_factory(
+    model=NodeGroup, 
+    form=NodeGroupCreateForm, 
+    extra=1, # You can adjust this number if you need to display more than one empty form for adding new NodeGroups
+    can_delete=True  # If you want to allow deleting node groups through the formset
+)
 
 class ASGNodeLimitsForm(ModelForm):
     '''
@@ -146,13 +206,33 @@ class NodeGroupCfgForm(ModelForm):
             self.fields['version'].choices = [(v, v) for v in available_versions]
     class Meta:
         model = NodeGroup
-        fields = ['provisioning_suspended','is_public', 'version', 'allow_deploy_by_token', 'destroy_when_no_nodes' ]
-        readonly_fields = ['cfg_asg']
+        fields = ['version', 'is_public', 'allow_deploy_by_token', 'destroy_when_no_nodes','provisioning_suspended' ]
 
-class OrgProfileForm(ModelForm):
-    class Meta:
-        model = OrgAccount
-        fields = ['point_of_contact_name', 'email', ]
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        
+        # assuming you're using the instance right after saving
+        if commit:
+            instance.save()
+            
+            # Create the related ASGNodeLimits instance
+            asg_limits = ASGNodeLimits(
+                num=self.cleaned_data['cfg_asg_num'],
+                min=self.cleaned_data['cfg_asg_min'],
+                max=self.cleaned_data['cfg_asg_max'],
+                content_object=instance
+            )
+            asg_limits.save()
+        
+            # Create the related Budget instance
+            budget = Budget(
+                max_allowance=self.cleaned_data['budget_max_allowance'],
+                monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
+                balance=self.cleaned_data['budget_balance'],
+                content_object=instance
+            )
+            budget.save()
+        return instance
 
 class ReadOnlyBudgetForm(forms.ModelForm):
     class Meta:
@@ -165,13 +245,17 @@ class ReadOnlyBudgetForm(forms.ModelForm):
         self.fields['max_allowance'].widget.attrs['readonly'] = True
         self.fields['monthly_allowance'].widget.attrs['readonly'] = True
 
-ReadOnlyBudgetFormSet   = generic_inlineformset_factory(Budget, form=ReadOnlyBudgetForm, extra=0, fields=['balance','max_allowance','monthly_allowance'], can_delete=False)
-NodeGroupBudgetFormSet  = generic_inlineformset_factory(Budget, extra=0, fields=['balance','max_allowance','monthly_allowance'],can_delete=False)
+NodeGroupBudgetFormSet  = generic_inlineformset_factory(Budget, extra=1, fields=['balance','max_allowance','monthly_allowance'],can_delete=False)
 
 class OrgAccountForm(ModelForm):
     class Meta:
         model = OrgAccount
         fields = '__all__'
+
+class OrgProfileForm(ModelForm):
+    class Meta:
+        model = OrgAccount
+        fields = ['point_of_contact_name', 'email', ]
 
 class CustomLoginForm(LoginForm):
     def __init__(self, *args, **kwargs):

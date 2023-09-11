@@ -7,73 +7,63 @@
 
 <div class="container-fluid">
     <div class="row">
-        <div class="col py-2 text-center"> <!-- Removed the inner .container and added text-center here -->
-            <div class="card shadow mx-auto d-block" style="max-width: fit-content;"> <!-- Added styles and classes to center and fit to content -->
+        <div class="col py-2 text-center"> 
+            <div class="card shadow mx-auto d-block" style="max-width: fit-content;"> 
                 <div class="card-header text-center">
-                    <h4>{{orgAccountObj.name}} Configuration</h4>
+                    <h3>{{orgAccountObj.name}} Configuration</h3>
                 </div>
                 <div class="card-body">
+                    <h4>{{orgAccountObj.name}} Budget</h4>
+                    {{ orgForm|crispy }}                            
                     <div class="auto-scroll-x-y">
-                        <form class="form" action="" method="post">
-                            {% csrf_token %}
-                            <div class="mb-4">
-                                {{ orgAccountForm|crispy }}
-                            </div>
-                            <div class="card">
+                        <div class="d-flex flex-column">
+                            <div class="card mt-4 flex-grow-1">
                                 <div class="card-header text-center">
-                                    <h5>Organization Budget</h5>
+                                    <h5>Node Groups Budgets</h5>
                                 </div>
                                 <div class="card-body">
-                                    {{ org_formset|crispy }}
-                                </div>                                
-                            </div>
-                            <div class="card mt-4">
-                                <div class="card-header text-center">
-                                    <h5>Node Group Budgets</h5>
-                                </div>
-                                <div class="card-body">
-                                    {% for ng_formset in ng_formsets %}
-                                    <div class="mb-4" data-formindex="{{ forloop.counter0 }}">
-                                        <h6>{{ ng_formset.instance.name }} Node Group</h6>
-                                        {{ ng_formset|crispy }}
-                                    </div>
-                                    {% endfor %}
-                                    <div class="btn-group">
-                                        <!-- Button to Open the Modal -->
-                                        <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#nodeGroupModal">Add Node Group</button>
-                                    </div>            
-                                </div>
-                            </div>                            
-                            <div class="btn-group">
-                                <button type="submit" class="btn btn-outline-primary my-1">Submit</button>
-                            </div>
-                        </form>
-                        <!-- The Modal -->
-                        <div class="modal fade" id="nodeGroupModal" tabindex="-1" aria-labelledby="nodeGroupModalLabel" aria-hidden="true">
-                            <div class="modal-dialog">
-                                <div class="modal-content">
-                                    <!-- Modal Header -->
-                                    <div class="modal-header">
-                                        <h4 class="modal-title">Add Node Group for {{orgAccountObj}}</h4>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                    </div>
-
-                                    <!-- Modal body -->
-                                    <div class="modal-body">
-                                        <form method="post">
+                                    <div class="auto-scroll-x-y">
+                                        <form class="form" action="" method="post">
                                             {% csrf_token %}
-                                            {{ nodeGroupCreateForm|crispy }}
+                                            <table class="table table-bordered">
+                                                <thead class="thead-dark">
+                                                    <tr>
+                                                        <th>Name</th>
+                                                        <th>
+                                                            <a href="{% url 'node-group-types' %}" class="btn btn-outline-primary">Type</a>
+                                                        </th>
+                                                        <th>Balance</th>
+                                                        <th title = "Maximum value the balance can be">Max</th>
+                                                        <th title = "Amount of allowance added to the balance every month">Monthly</th>
+                                                        <th>Min Nodes</th>
+                                                        <th>Max Nodes</th>
+                                                        <th>Delete</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% for form in nodeGroupCreateFormSet %}
+                                                    <tr {% if forloop.last %}class="bg-light"{% endif %}>
+                                                        <td>{{ form.name }}</td>
+                                                        <td>{{ form.type }}</td>
+                                                        <td>{{ form.budget_balance }}</td>
+                                                        <td>{{ form.budget_max_allowance }}</td>
+                                                        <td>{{ form.budget_monthly_allowance }}</td>
+                                                        <td>{{ form.cfg_asg_min }}</td>
+                                                        <td>{{ form.cfg_asg_max }}</td>
+                                                        <td>{{ form.DELETE }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                </tbody>
+                                            </table>                         
+                                            <div class="d-flex justify-content-center mt-3">
+                                                <button type="button" class="btn btn-secondary mr-2" onclick="history.back()">Back</button>
+                                                <button type="submit" class="btn btn-primary">Save Changes</button>
+                                            </div>
                                         </form>
                                     </div>
-
-                                    <!-- Modal footer -->
-                                    <div class="modal-footer">
-                                        <button type="button" class="btn btn-success" onclick="addNodeGroup(this)" data-formindex="{{ forloop.counter0 }}">Add</button>
-                                        <button type="button" class="btn btn-danger" data-bs-dismiss="modal" aria-label="Close">Close</button>
-                                    </div>
                                 </div>
                             </div>
-                        </div>
+                        </div>                            
                     </div>
                 </div>
             </div>
@@ -83,59 +73,4 @@
 
 {% endblock content %}
 {% block javascript %}
-<script>
-
-    function getCookie(name) {
-        let cookieValue = null;
-        if (document.cookie && document.cookie !== '') {
-            const cookies = document.cookie.split(';');
-            for (let i = 0; i < cookies.length; i++) {
-                const cookie = cookies[i].trim();
-                // Does this cookie string begin with the name we want?
-                if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                    break;
-                }
-            }
-        }
-        return cookieValue;
-    }
-
-    function addNodeGroup(buttonElement) {
-        var testit = 'yes'
-        var formIndex = buttonElement.getAttribute('data-formindex');
-        const csrftoken = getCookie('csrftoken');
-
-        var name = document.getElementById("id_form-" + formIndex + "-name").value;
-        var node_mgr_fixed_cost = document.getElementById("id_form-" + formIndex +"-node_mgr_fixed_cost").value;
-        var node_fixed_cost = document.getElementById("id_form-" + formIndex +"-node_fixed_cost").value;
-        var nodeGroupCreateUrl = "{% url 'node-group-create' orgAccountObj.id %}";
-        
-        // Post the data the Django view
-        $.ajax({
-            type: "POST",
-            url: nodeGroupCreateUrl,  
-            data: {
-                'name': name,
-                'node_mgr_fixed_cost': node_mgr_fixed_cost,
-                'node_fixed_cost': node_fixed_cost,
-            },
-            beforeSend: function(xhr, settings) {
-                xhr.setRequestHeader("X-CSRFToken", csrftoken);
-            },
-            success: function(response) {
-                if (response.success) {
-                    alert('Node Group added successfully!');
-                    location.reload();  // Refresh the page or update the DOM as needed
-                } else {
-                    alert('Error: ' + response.error);
-                }
-            },
-            error: function(xhr, status, error) {
-                alert('An error occurred: ' + error.message);
-            }
-        });
-    }
-
-</script>
 {% endblock javascript %}

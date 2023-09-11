@@ -667,16 +667,16 @@ def update_burn_rates(nodeGroupObj):
         max_nodes = nodeGroupObj.cur_asg.max
 
         if min_nodes > 0:
-            forecast_min_hrly = nodeGroupObj.node_mgr_fixed_cost + min_nodes*nodeGroupObj.node_fixed_cost
+            forecast_min_hrly = nodeGroupObj.node_mgr_fixed_cost + min_nodes*nodeGroupObj.node_cost_per_hr
         else:
             forecast_min_hrly = 0.0001
 
         if nodeGroupObj.cur_asg.num > 0:
-            forecast_cur_hrly = nodeGroupObj.node_mgr_fixed_cost + nodeGroupObj.cur_asg.num*nodeGroupObj.node_fixed_cost
+            forecast_cur_hrly = nodeGroupObj.node_mgr_fixed_cost + nodeGroupObj.cur_asg.num*nodeGroupObj.node_cost_per_hr
         else:
             forecast_cur_hrly = 0.0001
 
-        forecast_max_hrly = nodeGroupObj.node_mgr_fixed_cost + max_nodes*nodeGroupObj.node_fixed_cost
+        forecast_max_hrly = nodeGroupObj.node_mgr_fixed_cost + max_nodes*nodeGroupObj.node_cost_per_hr
 
         nodeGroupObj.min_hrly      = forecast_min_hrly
         nodeGroupObj.cur_hrly      = forecast_cur_hrly

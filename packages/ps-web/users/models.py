@@ -50,6 +50,9 @@ class Membership(models.Model):
             return ':' + self.user.username
 
 class Budget(models.Model):
+    DEF_MAX_ALLOWANCE = 10000.0
+    DEF_MONTHLY_ALLOWANCE = 1000.0
+    DEF_BALANCE = 10000.0
     id = models.UUIDField(default=uuid.uuid4,
                           unique=True,
                           primary_key=True,
@@ -143,6 +146,22 @@ class OrgAccount(models.Model):
     creation_date = models.DateTimeField(auto_now_add=True)
     modified_date = models.DateTimeField(auto_now=True)
 
+class NodeGroupType(models.Model): 
+    def __str__(self):
+        return str(self.name)
+
+    id = models.UUIDField(default=uuid.uuid4,
+                          unique=True,
+                          primary_key=True,
+                          editable=False)
+    node_mgnt_fixed_cost = models.FloatField(editable=True,default=0.145,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for monitor and ilb")  # Overhead==> (monitor is c7g.large, ilb is c7g.large; .0725)
+    per_node_cost_per_hr = models.FloatField(default=0.2016,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for node")  # Per Node (r6g.xlarge = 0.226)
+    name = models.CharField(max_length=128,
+                            default='EC2-c7g.large-t4g.2xlarge',
+                            blank=False,
+                            null=False)
+    description = models.CharField(max_length=500,default="Add Description here...")    # like An EC2 instance using c7g.large for the ilb and monitor and t4g.2xlarge for the nodes
+
 class NodeGroup(models.Model): 
     def __str__(self):
         return str(self.org.name) + "-" + str(self.name)
@@ -160,9 +179,7 @@ class NodeGroup(models.Model):
                             on_delete=models.CASCADE,
                             null=False,
                             blank=False)
-    node_mgr_fixed_cost = models.FloatField(editable=True,default=0.145,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for monitor and ilb")  # Overhead==> (monitor is c7g.large, ilb is c7g.large; .0725)
-    node_fixed_cost = models.FloatField(default=0.2016,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for node")  # Per Node (r6g.xlarge = 0.226)
-
+    type = models.ForeignKey(NodeGroupType, on_delete=models.CASCADE, related_name="node_groups", null=True)    
     creation_date = models.DateTimeField(auto_now_add=True)
     modified_date = models.DateTimeField(auto_now=True)
     mgr_ip_address = models.GenericIPAddressField(default='0.0.0.0', editable=True)
