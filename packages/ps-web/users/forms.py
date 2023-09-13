@@ -1,19 +1,21 @@
+from typing import Any
 from django import forms
 from django.forms import ModelForm
 from django.contrib.auth.forms import UserCreationForm, UsernameField, UserChangeForm
 from django.forms import BaseInlineFormSet
 from django.forms import modelformset_factory
-from django.forms import ModelForm, IntegerField
+from django.forms import ModelForm, IntegerField, DecimalField
+from django.forms import BaseModelFormSet
 
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
-from .models import Membership, OrgAccount, NodeGroup, NodeGroupType, User, ClusterNumNode, ASGNodeLimits, Budget
+from .models import Membership, OrgAccount, NodeGroup, NodeGroupType, User, ClusterNumNode, ASGNodeLimits, Budget, Cost
 from captcha.fields import CaptchaField
 from datetime import datetime,timedelta
 from datetime import timezone
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from .global_constants import MIN_TTL, MAX_TTL
-
+from .tasks import getGranChoice,init_new_org_memberships
 from allauth.account.forms import LoginForm
 from allauth.account.forms import SignupForm
 from allauth.socialaccount.forms import SignupForm as SocialSignupForm
@@ -23,6 +25,17 @@ from crispy_forms.layout import Layout, Div, Row, Column, Field
 from django.core.exceptions import ValidationError
 from django.forms.widgets import NumberInput
 from django.forms import ModelForm, NumberInput, TextInput, CheckboxInput, Widget
+from django.db import transaction
+
+
+import logging
+LOG = logging.getLogger('django')
+
+def has_non_blank_char(s):
+    return any(c.strip() for c in s)
+def has_at_least_three_alpha(s):
+    return sum(1 for c in s if c.isalpha()) >= 3
+
 
 class ExampleForm(forms.Form):
     name = forms.CharField()
@@ -118,18 +131,27 @@ class NodeGroupTypeCreateForm(ModelForm):
     '''
     class Meta:
         model = NodeGroupType
-        fields = '__all__'
-    # def __init__(self, *args, **kwargs):
-    #     super(NodeGroupTypeCreateForm, self).__init__(*args, **kwargs)
-    #     # Exclude null options from the type field's queryset
-    #     self.fields['type'].queryset = self.fields['type'].queryset.exclude(pk__isnull=True)
+        fields = ['name', 'definition', 'description', 'node_mgnt_fixed_cost', 'per_node_cost_per_hr']
+        readonly = ['id']
 
 NodeGroupTypeCreateFormSet = modelformset_factory(
     model=NodeGroupType, 
     form=NodeGroupTypeCreateForm, 
     extra=1, # You can adjust this number if you need to display more than one empty form for adding new NodeGroups
-    can_delete=True  # If you want to allow deleting node groups through the formset
+    fields = ['name', 'definition', 'description', 'node_mgnt_fixed_cost', 'per_node_cost_per_hr'],
+
+    can_delete=True,  # If you want to allow deleting node groups through the formset
 )
+
+def create_related_costs(instance, init_accounting_tm):
+    try:
+        for granularity in ["HOURLY", "DAILY", "MONTHLY"]:
+            has_Cost = Cost.objects.filter(object_id=instance.id, gran=granularity).exists()
+            if not has_Cost:
+                granObj = getGranChoice(granularity=granularity)
+                Cost.objects.create(content_object=instance, gran=granObj, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
+    except Exception as e:
+        LOG.error(f"create_related_costs Exception:{e}")
 
 class NodeGroupCreateForm(ModelForm):
     '''
@@ -137,46 +159,85 @@ class NodeGroupCreateForm(ModelForm):
     '''
     cfg_asg_min = IntegerField(label="Min", initial=ASGNodeLimits.MIN_NODES)
     cfg_asg_max = IntegerField(label="Max", initial=ASGNodeLimits.DEF_ADMIN_MAX_NODES)
-    budget_max_allowance = IntegerField(label="Budget Max Allowance", initial=Budget.DEF_MAX_ALLOWANCE)
-    budget_monthly_allowance = IntegerField(label="Budget Monthly Allowance", initial=Budget.DEF_MONTHLY_ALLOWANCE) 
-    budget_balance = IntegerField(label="Budget Balance", initial=Budget.DEF_BALANCE)
+    budget_max_allowance = DecimalField(max_digits=8, decimal_places=2, label="Budget Max Allowance", initial=Budget.DEF_MAX_ALLOWANCE)
+    budget_monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Budget Monthly Allowance", initial=Budget.DEF_MONTHLY_ALLOWANCE) 
+    budget_balance = DecimalField(max_digits=8, decimal_places=2, label="Budget Balance", initial=Budget.DEF_BALANCE)
+
+    def __init__(self, *args, **kwargs):
+        self._org = kwargs.pop('org', None)
+        #LOG.info(f"NodeGroupCreateForm.__init__ org:{self._org}")
+        super(NodeGroupCreateForm, self).__init__(*args, **kwargs)
+
     class Meta:
         model = NodeGroup
         fields = ['name', 'type', 'budget_balance', 'budget_max_allowance', 'budget_monthly_allowance', 'cfg_asg_min', 'cfg_asg_max']
-        readonly_fields = ['org']
 
     def save(self, commit=True):
-        instance = super().save(commit=False)
-        
-        # assuming you're using the instance right after saving
-        if commit:
-            instance.save()
-            
+        with transaction.atomic():
+            init_accounting_tm = datetime.now(timezone.utc)-timedelta(days=366) # force update of accounting
+            instance = super().save(commit=False)           
+            instance.org = self._org   # Set the org to the specific instance passed during form initialization
+            LOG.info(f"NodeGroupCreateForm.save org:{instance.org}")
+            if commit:
+                instance.save()
+                
             # Create the related ASGNodeLimits instance
-            asg_limits = ASGNodeLimits(
-                num=self.cleaned_data['cfg_asg_num'],
-                min=self.cleaned_data['cfg_asg_min'],
-                max=self.cleaned_data['cfg_asg_max'],
-                content_object=instance
-            )
-            asg_limits.save()
-        
+            try:
+                has_ASGNodeLimits = ASGNodeLimits.objects.filter(object_id=instance.id).exists()
+                if not has_ASGNodeLimits:
+                    asg_limits = ASGNodeLimits(
+                        min=self.cleaned_data['cfg_asg_min'],
+                        max=self.cleaned_data['cfg_asg_max'],
+                        content_object=instance
+                    )
+                    asg_limits.save()
+                else:
+                    asg_limits = ASGNodeLimits.objects.get(object_id=instance.id)
+                    asg_limits.min=self.cleaned_data['cfg_asg_min']
+                    asg_limits.max=self.cleaned_data['cfg_asg_max']
+                    asg_limits.save()
+            except Exception as e:
+                LOG.error(f"save ASGNodeLimits Exception:{e}")
             # Create the related Budget instance
-            budget = Budget(
-                max_allowance=self.cleaned_data['budget_max_allowance'],
-                monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
-                balance=self.cleaned_data['budget_balance'],
-                content_object=instance
-            )
-            budget.save()
+            try:
+                has_Budget = Budget.objects.filter(object_id=instance.id).exists()
+                if not has_Budget:
+                    budget = Budget(
+                        max_allowance=self.cleaned_data['budget_max_allowance'],
+                        monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
+                        balance=self.cleaned_data['budget_balance'],
+                        most_recent_charge_time=init_accounting_tm,# force update of accounting
+                        most_recent_credit_time=init_accounting_tm,# force update of accounting
+                        content_object=instance
+                    )
+                    budget.save()
+                else:
+                    budget = Budget.objects.get(object_id=instance.id)
+                    budget.max_allowance=self.cleaned_data['budget_max_allowance']
+                    budget.monthly_allowance=self.cleaned_data['budget_monthly_allowance']
+                    budget.balance=self.cleaned_data['budget_balance']
+                    budget.most_recent_charge_time=init_accounting_tm
+            except Exception as e:
+                LOG.error(f"save Budget Exception:{e}")
+            create_related_costs(instance, init_accounting_tm)
         return instance
 
-NodeGroupCreateFormSet = modelformset_factory(
-    model=NodeGroup, 
-    form=NodeGroupCreateForm, 
-    extra=1, # You can adjust this number if you need to display more than one empty form for adding new NodeGroups
-    can_delete=True  # If you want to allow deleting node groups through the formset
-)
+class BaseNodeGroupCreateFormSet(BaseModelFormSet):
+
+    def __init__(self, *args, **kwargs):
+        self.org = kwargs.pop('org', None)
+        #LOG.info(f"BaseNodeGroupCreateFormSet.__init__ org:{self.org}")
+        super(BaseNodeGroupCreateFormSet, self).__init__(*args, **kwargs)
+
+    def get_form_kwargs(self, index):
+        kwargs = super().get_form_kwargs(index)
+        #LOG.info(f"BaseNodeGroupCreateFormSet.get_form_kwargs self.org:{self.org} kwargs:{kwargs}")
+        if self.org:
+            kwargs['org'] = self.org
+        #LOG.info(f"BaseNodeGroupCreateFormSet.get_form_kwargs kwargs:{kwargs}")
+        return kwargs
+
+NodeGroupCreateFormSet = modelformset_factory(NodeGroup, form=NodeGroupCreateForm, formset=BaseNodeGroupCreateFormSet, extra=1)
 
 class ASGNodeLimitsForm(ModelForm):
     '''
@@ -208,30 +269,48 @@ class NodeGroupCfgForm(ModelForm):
         model = NodeGroup
         fields = ['version', 'is_public', 'allow_deploy_by_token', 'destroy_when_no_nodes','provisioning_suspended' ]
 
+    def clean_name(self):
+        name = self.cleaned_data.get('name')
+        if name == 'uninitialized':
+            raise ValidationError('The name "uninitialized" is not allowed.')
+        if not has_non_blank_char(name):
+            raise ValidationError('The name must contain at least one non-blank character.')
+        if not has_at_least_three_alpha(name):
+            raise ValidationError('The name must contain at least three alphabetic characters.')
+        return name
+
+
     def save(self, commit=True):
-        instance = super().save(commit=False)
-        
-        # assuming you're using the instance right after saving
-        if commit:
-            instance.save()
+        with transaction.atomic():
+            instance = super().save(commit=False)
             
-            # Create the related ASGNodeLimits instance
-            asg_limits = ASGNodeLimits(
-                num=self.cleaned_data['cfg_asg_num'],
-                min=self.cleaned_data['cfg_asg_min'],
-                max=self.cleaned_data['cfg_asg_max'],
-                content_object=instance
-            )
-            asg_limits.save()
+            # assuming you're using the instance right after saving
+            if commit:
+                instance.save()
+
+            try:    
+                # Create the related ASGNodeLimits instance
+                asg_limits = ASGNodeLimits(
+                    num=self.cleaned_data['cfg_asg_num'],
+                    min=self.cleaned_data['cfg_asg_min'],
+                    max=self.cleaned_data['cfg_asg_max'],
+                    content_object=instance
+                )
+                asg_limits.save()
+            except Exception as e:
+                LOG.error(f"save ASGNodeLimits Exception:{e}")
         
-            # Create the related Budget instance
-            budget = Budget(
-                max_allowance=self.cleaned_data['budget_max_allowance'],
-                monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
-                balance=self.cleaned_data['budget_balance'],
-                content_object=instance
-            )
-            budget.save()
+            try:
+                # Create the related Budget instance
+                budget = Budget(
+                    max_allowance=self.cleaned_data['budget_max_allowance'],
+                    monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
+                    balance=self.cleaned_data['budget_balance'],
+                    content_object=instance
+                )
+                budget.save()
+            except Exception as e:
+                LOG.error(f"save Budget Exception:{e}")
         return instance
 
 class ReadOnlyBudgetForm(forms.ModelForm):
@@ -245,12 +324,94 @@ class ReadOnlyBudgetForm(forms.ModelForm):
         self.fields['max_allowance'].widget.attrs['readonly'] = True
         self.fields['monthly_allowance'].widget.attrs['readonly'] = True
 
-NodeGroupBudgetFormSet  = generic_inlineformset_factory(Budget, extra=1, fields=['balance','max_allowance','monthly_allowance'],can_delete=False)
+class OrgBudgetForm(forms.ModelForm):
+    max_allowance = DecimalField(max_digits=8, decimal_places=2, label="Budget Max Allowance", initial=Budget.DEF_MAX_ALLOWANCE)
+    monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Budget Monthly Allowance", initial=Budget.DEF_MONTHLY_ALLOWANCE) 
+    balance = DecimalField(max_digits=8, decimal_places=2, label="Budget Balance", initial=Budget.DEF_BALANCE)
 
-class OrgAccountForm(ModelForm):
+    allocated_max_allowance = DecimalField(max_digits=8, decimal_places=2, label="Allocated Max Allowance", initial=0.00)
+    allocated_monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Allocated Monthly Allowance", initial=0.00) 
+    allocated_balance = DecimalField(max_digits=8, decimal_places=2, label="Allocated Balance", initial=0.00)
+
+    unallocated_max_allowance = DecimalField(max_digits=8, decimal_places=2, label="Unallocated Max Allowance", initial=0.00)
+    unallocated_monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Unallocated Monthly Allowance", initial=0.00) 
+    unallocated_balance = DecimalField(max_digits=8, decimal_places=2, label="Unallocated Balance", initial=0.00)
+
+    def __init__(self, *args, **kwargs):
+        self._org = kwargs.pop('org', None)
+        super().__init__(*args, **kwargs)
+        self.fields['allocated_max_allowance'].widget.attrs['readonly'] = True
+        self.fields['allocated_monthly_allowance'].widget.attrs['readonly'] = True
+        self.fields['allocated_balance'].widget.attrs['readonly'] = True
+        self.fields['unallocated_max_allowance'].widget.attrs['readonly'] = True
+        self.fields['unallocated_monthly_allowance'].widget.attrs['readonly'] = True
+        self.fields['unallocated_balance'].widget.attrs['readonly'] = True
+
+    class Meta:
+        model = Budget
+        fields = ['balance', 'max_allowance', 'monthly_allowance', 'allocated_balance', 'allocated_max_allowance', 'allocated_monthly_allowance', 'unallocated_balance', 'unallocated_max_allowance', 'unallocated_monthly_allowance']
+
+    def add_to_field(self,field_name ,amount):
+        self.fields[f'{field_name}'] += amount
+    def set_field(self,field_name ,amount):
+        self.fields[f'{field_name}'] = amount
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.org = self._org
+        return instance
+
+
+class OrgCreateForm(ModelForm):
+    budget_max_allowance = DecimalField(label="Budget Max Allowance", initial=Budget.DEF_MAX_ALLOWANCE)
+    budget_monthly_allowance = DecimalField(label="Budget Monthly Allowance", initial=Budget.DEF_MONTHLY_ALLOWANCE) 
+    budget_balance = DecimalField(label="Budget Balance", initial=Budget.DEF_BALANCE)
     class Meta:
         model = OrgAccount
-        fields = '__all__'
+        fields = ['owner', 'name', 'point_of_contact_name', 'email', 'mfa_code', 'budget_balance', 'budget_max_allowance', 'budget_monthly_allowance']
+
+    def clean_name(self):
+        name = self.cleaned_data.get('name')
+        if name == 'uninitialized':
+            raise ValidationError('The name "uninitialized" is not allowed.')
+        if not has_non_blank_char(name):
+            raise ValidationError('The name must contain at least one non-blank character.')
+        if not has_at_least_three_alpha(name):
+            raise ValidationError('The name must contain at least three alphabetic characters.')
+        return name
+
+    def save(self, commit=True):
+        with transaction.atomic():
+            instance = super().save(commit=False)
+            
+            if commit:
+                instance.save()
+                
+            # Create the related ASGNodeLimits instance for sum_asg
+            sum_asg = ASGNodeLimits(
+                num=0,
+                min=0,
+                max=0,
+                content_object=instance
+            )
+            sum_asg.save()
+            init_accounting_tm = datetime.now(timezone.utc)-timedelta(days=366) # force update of accounting
+            # Create the related Budget instance
+            try:
+                budget = Budget(
+                    max_allowance=self.cleaned_data['budget_max_allowance'],
+                    monthly_allowance=self.cleaned_data['budget_monthly_allowance'],
+                    balance=self.cleaned_data['budget_balance'],
+                    most_recent_charge_time=init_accounting_tm,# force update of accounting
+                    most_recent_credit_time=init_accounting_tm,# force update of accounting
+                    content_object=instance
+                )
+                budget.save()
+            except Exception as e:
+                LOG.error(f"save Budget Exception:{e}")
+            create_related_costs(instance, init_accounting_tm)
+            init_new_org_memberships(instance)
+        return instance
 
 class OrgProfileForm(ModelForm):
     class Meta:

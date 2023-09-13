@@ -1,39 +1,41 @@
 <div class="container-fluid">
     <div class="card text-center mb-2 border-0">
-        {% if not membership.active %}
-            <div class="mm-btn-group my-4 mx-4">
-                <a class="btn btn-outline-primary"  href="{% url 'cancel-membership' membership.id %}">Cancel Membership</a> 
-            </div>
-            <dl>
-                <dt>(Pending Activation)</dt>
-                <dd><span>requested {{membership.creation_date | date:"DATETIME_FORMAT"}}</span></dd>
-            </dl>
-        {% else %}
-            <div class="mm-btn-group my-4 mx-4">
-                {% if is_developer or user_is_owner_of_org  %}
-                    <a class="btn btn-outline-primary"  href="{% url 'org-config' membership.org.id %}">Configure</a> 
-                {% else %}
+        {% if membership %} 
+            {% if not membership.active %}
+                <div class="mm-btn-group my-4 mx-4">
                     <a class="btn btn-outline-primary"  href="{% url 'cancel-membership' membership.id %}">Cancel Membership</a> 
-                {% endif %}
-            </div>
-            <div my-4 mx-2>
-                <dl class="border border-0">
-                    <dt>Monthly Allowance</dt>
-                    <dd>{{membership.org.budget.first.monthly_allowance}}</dd>
-                    <dt>Current Balance</dt>
-                    <dd>{{membership.org.budget.first.balance}}</dd>
-                    <dt>Max Allowance</dt>
-                    <dd>{{membership.org.budget.first.max_allowance}}</dd>
-                    {% if not user_is_owner_of_org  %}
-                        <dt>Owner</dt>
-                        <dd> {{membership.org.owner.first_name}} {{membership.org.owner.last_name}}</dd>
-                        <dt>Owner Email</dt>
-                        <dd>{{membership.org.owner.email}}</dd>
-                    {% endif %}
-                    <dt>Member Since</dt>
-                    <dd><p>{{membership.activation_date | date:"DATETIME_FORMAT"}}</p></dd>
+                </div>
+                <dl>
+                    <dt>(Pending Activation)</dt>
+                    <dd><span>requested {{membership.creation_date | date:"DATETIME_FORMAT"}}</span></dd>
                 </dl>
-            </div>
+            {% else %}
+                <div class="mm-btn-group my-4 mx-4">
+                    {% if is_developer or user_is_owner_of_org  %}
+                        <a class="btn btn-outline-primary"  href="{% url 'org-config' membership.org.id %}">Configure</a> 
+                    {% else %}
+                        <a class="btn btn-outline-primary"  href="{% url 'cancel-membership' membership.id %}">Cancel Membership</a> 
+                    {% endif %}
+                </div>
+                <div my-4 mx-2>
+                    <dl class="border border-0">
+                        <dt>Monthly Allowance</dt>
+                        <dd>{{membership.org.budget.first.monthly_allowance}}</dd>
+                        <dt>Current Balance</dt>
+                        <dd>{{membership.org.budget.first.balance}}</dd>
+                        <dt>Max Allowance</dt>
+                        <dd>{{membership.org.budget.first.max_allowance}}</dd>
+                        {% if not user_is_owner_of_org  %}
+                            <dt>Owner</dt>
+                            <dd> {{membership.org.owner.first_name}} {{membership.org.owner.last_name}}</dd>
+                            <dt>Owner Email</dt>
+                            <dd>{{membership.org.owner.email}}</dd>
+                        {% endif %}
+                        <dt>Member Since</dt>
+                        <dd><p>{{membership.activation_date | date:"DATETIME_FORMAT"}}</p></dd>
+                    </dl>
+                </div>
+            {% endif %}
         {% endif %}
     </div>
 </div>

@@ -78,7 +78,7 @@
                                                                             {% if user_is_developer %}
                                                                                 <form action="{% url 'org-delete' org.id %}" method="post" onsubmit="return confirmDelete();">
                                                                                     {% csrf_token %}
-                                                                                    <button type="submit" class="btn btn-danger">Delete this Organization</button>
+                                                                                    <button type="submit" class="btn btn-outline-danger">Delete this Organization</button>
                                                                                 </form>
                                                                             {% endif %}                                                                                                                                  
                                                                         </div>

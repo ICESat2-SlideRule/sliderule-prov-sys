@@ -20,31 +20,46 @@
                             <table class="table table-bordered">
                                 <thead class="thead-dark">
                                     <tr>
+                                        <th>Delete</th>
                                         <th>Name</th>
+                                        <th>Definition</th>
                                         <th>Description</th>
                                         <th title="Fixed cost in dollars per hour">Fixed Cost</th>
                                         <th title="Hourly cost per node instance">Per Node Cost</th>
-                                        <th>Delete</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {% for form in nodeGroupTypeCreateFormSet %}
-                                    <tr {% if forloop.last %}class="bg-light"{% endif %}>
+                                    <tr {% if forloop.last %}class="bg-primary bg-opacity-25"{% endif %}>
+                                        <td>
+                                            {% if forloop.last %}
+                                                {# This will display the form.DELETE control but disable it for the last entry #}
+                                                {{ form.DELETE|add:"disabled" }}
+                                                New
+                                            {% else %}
+                                                {{ form.DELETE }}
+                                            {% endif %}
+                                        </td>
                                         <td>{{ form.name }}</td>
+                                        <td>{{ form.definition }}</td>
                                         <td>{{ form.description }}</td>
                                         <td>{{ form.node_mgnt_fixed_cost }}</td>
                                         <td>{{ form.per_node_cost_per_hr }}</td>
-                                        <td>{{ form.DELETE }}</td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
                             </table>
-                            
-                            <div class="d-flex justify-content-center mt-3">
-                                <button type="button" class="btn btn-secondary mr-2" onclick="history.back()">Back</button>
-                                <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <div class="d-flex justify-content-between mt-3">
+                                <div>
+                                    <a href="https://aws.amazon.com/ec2/pricing/on-demand/" target="_blank" class="btn btn-outline-primary mr-3">AWS EC2 pricing</a>
+                                    <a href="https://aws.amazon.com/fargate/pricing/" target="_blank" class="btn btn-outline-primary">AWS FARGATE pricing</a>
+                                </div>
+                                <div>
+                                    <button type="button" class="btn btn-secondary mx-2" onclick="history.back()">Back</button>
+                                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                                </div>
                             </div>
-                                                    </form>
+                        </form>
                     </div>
                 </div>
             </div>

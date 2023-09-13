@@ -236,7 +236,8 @@ def get_memberships(request):
         if m.org is not None:
             memberships.append(m.org.name)
     return memberships
-def add_obj_cost(f):
+
+def add_obj_cost(obj_form):
     '''
         This adds an OrgAccount or NodeGroup object and the associated Cost objects
     '''
@@ -245,39 +246,24 @@ def add_obj_cost(f):
     p=None
     new_obj=None
     try:
-        start_main_loop = start_main_loop or False
         init_accounting_tm = datetime.now(timezone.utc)-timedelta(days=366) # force update
-        if f.is_valid():
-            new_obj = f.save(commit=False)
-            new_obj.most_recent_charge_time=init_accounting_tm
-            new_obj.most_recent_credit_time=init_accounting_tm
-            new_obj.save()
-            granObjHr = getGranChoice(granularity="HOURLY")
-            orgCostHr = Cost.objects.create(content_object=new_obj, gran=granObjHr, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
-            #LOG.info(orgCostHr.tm)
-            orgCostHr.save()
-            granObjDay = getGranChoice(granularity="DAILY")
-            orgCostDay = Cost.objects.create(content_object=new_obj, gran=granObjDay, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
-            orgCostDay.save()
-            granObjMonth = getGranChoice(granularity="MONTHLY")
-            orgCostMonth = Cost.objects.create(content_object=new_obj, gran=granObjMonth, tm=init_accounting_tm, cost_refresh_time=init_accounting_tm)
-            orgCostMonth.save()
+        if obj_form.is_valid():
+            new_obj = obj_form.save()
             LOG.info(f"added obj:{new_obj.name}")
         else:
-            emsg = f"Input Errors:{f.errors.as_text}"
+            emsg = f"Input Errors:{obj_form.errors.as_text}"
+            LOG.info(f"{emsg}")
     except Exception as e:
         LOG.exception("caught exception:")
         emsg = "Caught exception:"+repr(e)
-    
     return new_obj,msg,emsg
 
-def add_org_cost(f):
-    new_org,msg,emsg = add_obj_cost(f)
-    msg = init_new_org_memberships(new_org)
-    return new_org,msg,emsg
+def has_non_blank_char(s):
+    return any(c.strip() for c in s)
 
-def add_node_group_cost(f,start_main_loop=False):
-    new_node_group,msg,emsg = add_obj_cost(f)
+def add_node_group_cost(ng_form,budget_form,start_main_loop=None):
+    start_main_loop = start_main_loop or False
+    new_node_group,msg,emsg = add_obj_cost(ng_form,budget_form)
     p = create_node_group_queue(new_node_group)
     if start_main_loop:
         forever_loop_main_task.apply_async((new_node_group.__str__(),0),queue=get_node_group_queue_name(new_node_group))
@@ -286,6 +272,6 @@ def add_node_group_cost(f,start_main_loop=False):
         for app in Application.objects.all():
             domain = os.environ.get("DOMAIN")
             # new_node_group.__str__() has <org_name>-<cluster_name>
-            app.redirect_uris += '\n{}'.format(f"https://{new_node_group.__str__()}.{domain}/redirect_uri/")
+            app.redirect_uris += '\n{}'.format(f"https://{new_node_group.org.name()}.{domain}/redirect_uri/")
             app.save()
     return new_node_group,msg,emsg

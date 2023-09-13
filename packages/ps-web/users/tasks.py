@@ -1190,16 +1190,16 @@ def init_new_org_memberships(orgAccountObj):
     m.active = True
     m.save()
     msg = f"{m.user.first_name} {m.user.last_name} ({m.user.username}) now owns new org/cluster:{m.org.name}"
+    LOG.info(f"{msg}")
     users = get_user_model().objects.all()
     for user in users:
-        if(user.is_staff and not user.is_superuser and not (user == orgAccountObj.owner)):
+        if(user.groups.filter(name='PS_Developer').exists() and not user.is_superuser and not (user == orgAccountObj.owner)):
             m = Membership()
             m.org = orgAccountObj
             m.user = user
             m.active = True
             m.save()
-            LOG.info("Staff member %s %s (%s) is now a member of %s",
-                    m.user.first_name, m.user.last_name, m.user.username, m.org.name)
+            LOG.info(f" Developer {m.user.first_name} {m.user.last_name} ({m.user.username}) is now a member of {m.org.name}")
     return msg
 
 def ps_cmd_cleanup(nodeGroupObj,st,org_cmd_str):

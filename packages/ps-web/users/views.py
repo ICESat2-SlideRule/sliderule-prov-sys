@@ -20,8 +20,8 @@ from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.db.transaction import get_autocommit
 from .models import NodeGroup, NodeGroupType, GranChoice, OrgAccount, Cost, Membership, User, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget
-from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgAccountForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,BudgetForm,ReadOnlyBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeCreateFormSet
-from .utils import get_db_cluster_cost,add_org_cost,add_node_group_cost
+from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgCreateForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,OrgBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeCreateFormSet
+from .utils import get_db_cluster_cost,add_obj_cost,add_node_group_cost
 from .tasks import get_versions, update_burn_rates, getGranChoice, sort_CNN_by_nn_exp,forever_loop_main_task,get_node_group_queue_name,remove_num_node_requests,get_PROVISIONING_DISABLED,set_PROVISIONING_DISABLED,process_num_nodes_api
 from django.core.mail import send_mail
 from django.conf import settings
@@ -102,7 +102,7 @@ def nodeGroupTypes(request):
             if nodeGroupTypeCreateFormSet.is_valid():
                 lenOfForms = len(list(nodeGroupTypeCreateFormSet))
                 for form in nodeGroupTypeCreateFormSet:
-                    if form.has_changed() or lenOfForms==1:
+                    if form.has_changed() or lenOfForms == 1:
                         if form.cleaned_data.get('DELETE'):
                             form.instance.delete()
                             LOG.info("form deleted")
@@ -112,8 +112,13 @@ def nodeGroupTypes(request):
                         messages.success(request, "Node Group Types successfully updated")
                     else:
                         LOG.info("form has not changed")
-                        messages.info(request, "Node Group Types NOT updated")
+                        messages.info(request, "Node Group Types NOT updated: no changes detected")
             else:
+                # Display specific errors from the formset
+                for form in nodeGroupTypeCreateFormSet:
+                    for field, errors in form.errors.items():
+                        for error in errors:
+                            messages.error(request, f"Error in {field}: {error}")
                 messages.error(request, "Node Group Types NOT updated")
         else:
             nodeGroupTypeCreateFormSet = NodeGroupTypeCreateFormSet(queryset=NodeGroupType.objects.all())
@@ -121,7 +126,7 @@ def nodeGroupTypes(request):
         return render(request, 'users/node_group_types.html', context)
     except Exception as e:
         LOG.exception("Caught unexpected exception")
-        messages.error(request, f"Unexpected error: {repr(e)}")    
+        messages.error(request, f"Unexpected error: {repr(e)}")
     return redirect('browse')
 
 
@@ -641,11 +646,20 @@ def ajaxNodeGroupAccountForecast(request):
     else:
         LOG.warning(f"{request.method} {nodeGroupObj} redirected to browse")
         return redirect('browse')
-    
+
+def set_intermediate_fields(orgBudgetForm,ng_form):
+    orgBudgetForm.add_to_field(field_name='allocated_max_allowance' , amount=ng_form.cleaned_data['budget_max_allowance'])
+    orgBudgetForm.set_field(field_name='unallocated_max_allowance' , amount = (ng_form.cleaned_data['budget_max_allowance'] - orgBudgetForm.cleaned_data['allocated_max_allowance']))
+    orgBudgetForm.add_to_field(field_name='allocated_monthly_allowance' , amount=ng_form.cleaned_data['budget_monthly_allowance'])
+    orgBudgetForm.set_field(field_name='unallocated_monthly_allowance' , amount = (ng_form.cleaned_data['budget_monthly_allowance'] - orgBudgetForm.cleaned_data['allocated_monthly_allowance']))
+    orgBudgetForm.add_to_field(field_name='allocated_balance' , amount=ng_form.cleaned_data['budget_balance'])
+    orgBudgetForm.set_field(field_name='unallocated_balance' , amount = (ng_form.cleaned_data['budget_balance'] - orgBudgetForm.cleaned_data['allocated_balance']))
+
+
 @login_required(login_url='account_login')
 @verified_email_required
 @transaction.atomic
-def orgConfig(request, pk):
+def orgBudget(request, pk):
     try:
         orgAccountObj = OrgAccount.objects.get(id=pk)
         LOG.info(f"{request.method} {orgAccountObj.name}")
@@ -660,50 +674,54 @@ def orgConfig(request, pk):
 
         # Check if a related Budget already exists for the OrgAccount instance
         has_budget = Budget.objects.filter(content_type=content_type, object_id=orgAccountObj.id).exists()
-
-        # If a related Budget doesn't exist, create one with default values and save it
+        # This is needed for backward compatibility with existing OrgAccounts
+        # If a related Budget doesn't exist, create one and save it
         if not has_budget:
-            Budget.objects.create(
-                content_type=content_type, 
-                object_id=orgAccountObj.id,
-                max_allowance=0.0,
-                monthly_allowance=0.0,
-                balance=0.0
-            )
+            new_budget = Budget.objects.create(max_allowance=0.0, monthly_allowance=0.0, balance=0.0,content_object=orgAccountObj)
+            new_budget.save()                
 
-        # Initialization of NodeGroup formsets
+        orgBudgetObj = orgAccountObj.budget.first()
         if request.method == "POST":
-            nodeGroupCreateFormSet = NodeGroupCreateFormSet(request.POST, queryset=NodeGroup.objects.filter(org=orgAccountObj))
-        else:
-            nodeGroupCreateFormSet = NodeGroupCreateFormSet(queryset=NodeGroup.objects.filter(org=orgAccountObj))
-
-        if request.method == "POST":
-            orgAccountForm = OrgAccountForm(request.POST, instance=orgAccountObj)
-            orgForm = ReadOnlyBudgetForm(instance=orgAccountObj.budget.first())
+            orgBudgetForm = OrgBudgetForm(instance=orgBudgetObj)
+            nodeGroupCreateFormSet = NodeGroupCreateFormSet(request.POST, queryset=NodeGroup.objects.filter(org=orgAccountObj),org=orgAccountObj)
             all_node_groups_valid = all([ng_create_formset.is_valid() for ng_create_formset in nodeGroupCreateFormSet])
-            if orgAccountForm.is_valid() and all_node_groups_valid:
-                orgAccountObj.budget.monthly_allowance = sum([ng_create_formset.cleaned_data.get('monthly_allowance', 0) for ng_create_formset in nodeGroupCreateFormSet])
-                orgAccountObj.budget.max_allowance = sum([ng_create_formset.cleaned_data.get('max_allowance', 0) for ng_create_formset in nodeGroupCreateFormSet])
-                orgAccountObj.budget.balance = sum([ng_create_formset.cleaned_data.get('balance', 0) for ng_create_formset in nodeGroupCreateFormSet])
-                orgAccountObj.budget.save()  # Save the changes to the budget
-                
-                for ng_create_formset in nodeGroupCreateFormSet:
-                    ng_create_formset.save()
-                orgAccountObj.save()
-                
-                messages.success(request, f'Org Account {orgAccountObj.name} successfully saved')
-                LOG.info(f"Profile updated with point_of_contact_name:{orgAccountObj.point_of_contact_name} email:{orgAccountObj.email}")
+            LOG.info(f"POST all_node_groups_valid:{all_node_groups_valid}")
+            if all_node_groups_valid:
+                cnt=0
+                try:
+                    for ng_form in nodeGroupCreateFormSet:
+                        ng_form.save()
+                        cnt +=1
+                        set_intermediate_fields(orgBudgetForm=orgBudgetForm,ng_form=ng_form)
+                    orgBudgetObj.save('budget_max_allowance','budget_monthly_allowance','budget_balance')
+                    messages.success(request, f'Org Account {orgAccountObj.name} successfully saved with {cnt} Node Groups')
+                    LOG.info( f'Org Account {orgAccountObj.name} successfully saved org bugdet and {cnt} node group budgets')
+                except Exception as e:
+                    LOG.exception("caught exception:")
+                    messages.error(request, f'Error saving Org Account {orgAccountObj.name} with {cnt} Node Groups')
             else:
-                form_errors = orgAccountForm.errors.as_text() + " " + " ".join([ng_create_formset.errors.as_text() for ng_create_formset in nodeGroupCreateFormSet])
-                LOG.error(f"Form error:{form_errors}")
-                messages.error(request, f'Errors in form: {form_errors}')
-
-        # Initialize forms and formsets to reflect the summed values
-        orgAccountForm = OrgAccountForm(instance=orgAccountObj)
-        orgForm = ReadOnlyBudgetForm(instance=orgAccountObj.budget.first())
-        nodeGroupCreateForm = NodeGroupCreateForm()
-        context = {'orgAccountObj': orgAccountObj, 'orgAccountForm': orgAccountForm, "nodeGroupCreateForm": nodeGroupCreateForm, 'orgForm':orgForm, 'nodeGroupCreateFormSet': nodeGroupCreateFormSet}
-        return render(request, 'users/org_config.html', context)
+                form_errors = orgBudgetForm.errors.as_text() + " " + " ".join([ng_create_formset.errors.as_text() for ng_create_formset in nodeGroupCreateFormSet])
+                emsg = f'Errors in form: {form_errors}'
+                LOG.error(f"POST {emsg}")
+                messages.error(request, f'{emsg}')
+            nodeGroupCreateFormSet = NodeGroupCreateFormSet(request.POST, queryset=NodeGroup.objects.filter(org=orgAccountObj),org=orgAccountObj)
+        else:
+            nodeGroupCreateFormSet = NodeGroupCreateFormSet(queryset=NodeGroup.objects.filter(org=orgAccountObj),org=orgAccountObj)
+            # Initialize forms and formsets to reflect the summed values
+            orgBudgetForm = OrgBudgetForm(instance=orgBudgetObj)
+            all_node_groups_valid = all([ng_create_formset.is_valid() for ng_create_formset in nodeGroupCreateFormSet])
+            LOG.info(f"GET all_node_groups_valid:{all_node_groups_valid}")
+            if all_node_groups_valid:
+                cnt=0
+                try:
+                    for ng_form in nodeGroupCreateFormSet:
+                        set_intermediate_fields(orgBudgetForm=orgBudgetForm,ng_form=ng_form)
+                        cnt +=1
+                except Exception as e:
+                    LOG.exception("caught exception:")
+                    messages.error(request, f'Error initializing Org Account {orgAccountObj.name} with {cnt} Node Groups')
+        context = {'orgAccountObj': orgAccountObj, 'orgBudgetForm':orgBudgetForm, 'nodeGroupCreateFormSet': nodeGroupCreateFormSet}    
+        return render(request, 'users/org_budget.html', context)
     except OrgAccount.DoesNotExist:
         messages.error(request, "Organization does not exist!")
         return redirect('browse')
@@ -721,17 +739,16 @@ def orgAccountCreate(request):
         # User must be in the PS_Developer group or the owner to modify the profile
         if request.user.groups.filter(name='PS_Developer').exists():
             if request.method == 'POST':
-                org_account_form = OrgAccountForm(request.POST)
-                budget_form = BudgetForm(request.POST)
-                new_org,msg,emsg = add_org_cost(org_account_form,budget_form)
+                org_account_form = OrgCreateForm(request.POST)
+                new_org,msg,emsg = add_obj_cost(org_account_form)
                 if msg != '':
                     messages.info(request,msg)
                 if emsg != '':
                     messages.error(request,emsg)
                 return redirect('browse')
             else:
-                org_account_form = OrgAccountForm()
-                return render(request, 'users/org_create.html', {'form': org_account_form})
+                org_account_form = OrgCreateForm()
+                return render(request, 'users/org_create.html', {'org_form': org_account_form})
         else:
             messages.warning(request, 'Insufficient privileges')
             return redirect('browse')
@@ -887,11 +904,11 @@ def browse(request):
                                 org_has_public_cluster.update({o.name: True})
                         #LOG.info(f"number of memberships:{user_memberships.count()}")
                         for m in user_memberships:
-                            LOG.info(f"membership:{m}")
+                            #LOG.info(f"membership:{m}")
                             if o is not None and m.org is not None:
                                 if o.name == m.org.name:
                                     found_m = True
-                                    LOG.info(f"found membership:{m} for org:{o.name} user:{active_user.username}")
+                                    #LOG.info(f"found membership:{m} for org:{o.name} user:{active_user.username}")
                                     if not (o.owner == active_user):
                                         with_membership_not_owner.append(o)
                                     org_member.update({o.name: m})

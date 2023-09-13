@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.core import mail
-from users.forms import NodeGroupCfgForm,OrgAccountForm
+from users.forms import NodeGroupCfgForm,OrgCreateForm
 from users.models import OrgAccount,Membership,OwnerPSCmd,OrgAccount,ClusterNumNode,NodeGroup
 from users.views import add_org_cost,add_node_group_cost
 from datetime import timezone,datetime
@@ -323,7 +323,7 @@ def init_test_environ(  name=None,
     cur_ddt = datetime.now(timezone.utc) + timedelta(days=6)
     max_ddt = datetime.now(timezone.utc) + timedelta(days=3)
 
-    org_form = OrgAccountForm(data={
+    org_form = OrgCreateForm(data={
         'name': name,
         'owner': org_owner, # use same as sliderule org
         'point_of_contact_name': 'test point of contact here',

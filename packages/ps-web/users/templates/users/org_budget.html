@@ -1,0 +1,113 @@
+{% extends 'main.html' %}
+{% load crispy_forms_tags %}
+
+{% load i18n %}
+
+{% block content %}
+
+<div class="container-fluid">
+    <div class="row">
+        <div class="col py-2 text-center"> 
+            <div class="card shadow mx-auto d-block" style="max-width: fit-content;"> 
+                <div class="card-header text-center">
+                    <h3>{{orgAccountObj.name}} Budget</h3>
+                </div>
+                <div class="card-body">
+                    <div class="auto-scroll-x-y">
+                        <form class="form" action="" method="post">
+                            {% csrf_token %}
+                            <table class="table table-bordered">
+                                <thead class="thead-dark">
+                                    <tr>
+                                        <th></th>
+                                        <th>Balance</th>
+                                        <th>Max Allowance</th>
+                                        <th>Monthly Allowance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="bg-primary bg-opacity-10">
+                                        <th>Budget</th>
+                                        <td>{{ orgBudgetForm.balance }}</td>
+                                        <td>{{ orgBudgetForm.max_allowance }}</td>
+                                        <td>{{ orgBudgetForm.monthly_allowance }}</td>
+                                    </tr>
+                                    <tr class="bg-light">
+                                        <th >Allocated</th>
+                                        <td>{{ orgBudgetForm.allocated_balance }}</td>
+                                        <td>{{ orgBudgetForm.allocated_max_allowance }}</td>
+                                        <td>{{ orgBudgetForm.allocated_monthly_allowance }}</td>
+                                    </tr>
+                                    <tr class="bg-light">
+                                        <th>Unallocated</th>
+                                        <td>{{ orgBudgetForm.unallocated_balance }}</td>
+                                        <td>{{ orgBudgetForm.unallocated_max_allowance }}</td>
+                                        <td>{{ orgBudgetForm.unallocated_monthly_allowance }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="card shadow mx-auto d-block" style="max-width: fit-content;">
+                                <div class="card-header text-center">
+                                    <h3>Clusters</h3>
+                                </div>
+                                <div class="card-body">
+                                    <div class="auto-scroll-x-y">                
+                                        <table class="table table-bordered">
+                                            <thead class="thead-dark">
+                                                <tr>
+                                                    <th>Delete</th>
+                                                    <th>Name</th>
+                                                    <th>
+                                                        <a href="{% url 'node-group-types' %}" class="btn btn-outline-primary">Type</a>
+                                                    </th>
+                                                    <th>Balance</th>
+                                                    <th title = "Maximum value the balance can be">Max</th>
+                                                    <th title = "Amount of allowance added to the balance every month">Monthly</th>
+                                                    <th>Min Nodes</th>
+                                                    <th>Max Nodes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {{ nodeGroupCreateFormSet.management_form }}
+                                                {% for form in nodeGroupCreateFormSet %}
+                                                <tr {% if forloop.last %}class="bg-primary bg-opacity-10"{% endif %}>
+                                                        {% if forloop.last %}
+                                                            {# This will display the form.DELETE control but disable it for the last entry #}
+                                                            <td class="bg-white">
+                                                                <input type="checkbox" name="{{ form.DELETE.name }}" id="{{ form.DELETE.id_for_label }}" disabled>
+                                                            </td>
+                                                        {% else %}
+                                                            <td class="bg-primary bg-opacity-10">
+                                                                <input type="checkbox" name="{{ form.DELETE.name }}" id="{{ form.DELETE.id_for_label }}">
+                                                            </td>
+                                                        {% endif %}
+                                                                                                            
+                                                    <td>{{ form.name }}</td>
+                                                    <td>{{ form.type }}</td>
+                                                    <td>{{ form.budget_balance }}</td>
+                                                    <td>{{ form.budget_max_allowance }}</td>
+                                                    <td>{{ form.budget_monthly_allowance }}</td>
+                                                    <td>{{ form.cfg_asg_min }}</td>
+                                                    <td>{{ form.cfg_asg_max }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>                         
+                            <div class="d-flex justify-content-center mt-3">
+                                <button type="button" class="btn btn-outline-secondary mx-2" onclick="history.back()">Back</button>
+                                <button type="submit" class="btn btn-primary">Update</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock content %}
+{% block javascript %}
+{% endblock javascript %}

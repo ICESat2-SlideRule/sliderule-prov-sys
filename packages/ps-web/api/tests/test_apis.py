@@ -122,7 +122,7 @@ def test_config_cluster(caplog,client,mock_email_backend,initialize_test_environ
     min_nodes = -1  # Provide an invalid value for min_nodes
     max_nodes = 5
     # Manually construct the URL with an invalid value for min_nodes
-    url = f"/org_config/{name}/{min_nodes}/{max_nodes}/"
+    url = f"/org_budget/{name}/{min_nodes}/{max_nodes}/"
     response = client.put(url,headers=headers)
     logger.info(f"status:{response.status_code}")
     assert (response.status_code == 404)
