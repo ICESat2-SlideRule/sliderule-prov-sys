@@ -20,7 +20,7 @@ from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.db.transaction import get_autocommit
 from .models import NodeGroup, NodeGroupType, GranChoice, OrgAccount, Cost, Membership, User, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget
-from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgCreateForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,OrgBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeCreateFormSet
+from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgCreateForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,OrgBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeCreateFormSet,ReadOnlyBudgetForm
 from .utils import get_db_cluster_cost,add_obj_cost,add_node_group_cost
 from .tasks import get_versions, update_burn_rates, getGranChoice, sort_CNN_by_nn_exp,forever_loop_main_task,get_node_group_queue_name,remove_num_node_requests,get_PROVISIONING_DISABLED,set_PROVISIONING_DISABLED,process_num_nodes_api
 from django.core.mail import send_mail
@@ -648,12 +648,9 @@ def ajaxNodeGroupAccountForecast(request):
         return redirect('browse')
 
 def set_intermediate_fields(orgBudgetForm,ng_form):
-    orgBudgetForm.add_to_field(field_name='allocated_max_allowance' , amount=ng_form.cleaned_data['budget_max_allowance'])
-    orgBudgetForm.set_field(field_name='unallocated_max_allowance' , amount = (ng_form.cleaned_data['budget_max_allowance'] - orgBudgetForm.cleaned_data['allocated_max_allowance']))
-    orgBudgetForm.add_to_field(field_name='allocated_monthly_allowance' , amount=ng_form.cleaned_data['budget_monthly_allowance'])
-    orgBudgetForm.set_field(field_name='unallocated_monthly_allowance' , amount = (ng_form.cleaned_data['budget_monthly_allowance'] - orgBudgetForm.cleaned_data['allocated_monthly_allowance']))
-    orgBudgetForm.add_to_field(field_name='allocated_balance' , amount=ng_form.cleaned_data['budget_balance'])
-    orgBudgetForm.set_field(field_name='unallocated_balance' , amount = (ng_form.cleaned_data['budget_balance'] - orgBudgetForm.cleaned_data['allocated_balance']))
+    orgBudgetForm.add_to_field(field_name='max_allowance' , amount=ng_form.cleaned_data['budget_max_allowance'])
+    orgBudgetForm.add_to_field(field_name='monthly_allowance' , amount=ng_form.cleaned_data['budget_monthly_allowance'])
+    orgBudgetForm.add_to_field(field_name='balance' , amount=ng_form.cleaned_data['budget_balance'])
 
 
 @login_required(login_url='account_login')
@@ -682,7 +679,7 @@ def orgBudget(request, pk):
 
         orgBudgetObj = orgAccountObj.budget.first()
         if request.method == "POST":
-            orgBudgetForm = OrgBudgetForm(instance=orgBudgetObj)
+            orgBudgetForm = OrgBudgetForm(instance=orgBudgetObj,org=orgAccountObj)
             nodeGroupCreateFormSet = NodeGroupCreateFormSet(request.POST, queryset=NodeGroup.objects.filter(org=orgAccountObj),org=orgAccountObj)
             all_node_groups_valid = all([ng_create_formset.is_valid() for ng_create_formset in nodeGroupCreateFormSet])
             LOG.info(f"POST all_node_groups_valid:{all_node_groups_valid}")
@@ -693,7 +690,7 @@ def orgBudget(request, pk):
                         ng_form.save()
                         cnt +=1
                         set_intermediate_fields(orgBudgetForm=orgBudgetForm,ng_form=ng_form)
-                    orgBudgetObj.save('budget_max_allowance','budget_monthly_allowance','budget_balance')
+                    orgBudgetForm.save()
                     messages.success(request, f'Org Account {orgAccountObj.name} successfully saved with {cnt} Node Groups')
                     LOG.info( f'Org Account {orgAccountObj.name} successfully saved org bugdet and {cnt} node group budgets')
                 except Exception as e:

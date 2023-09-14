@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     'allauth.account',
     'allauth.socialaccount',
     'allauth.socialaccount.providers.github',
+    'widget_tweaks',
 #    'allauth.socialaccount.providers.google',
 ]
 CRISPY_TEMPLATE_PACK = 'bootstrap'

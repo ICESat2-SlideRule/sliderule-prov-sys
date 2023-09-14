@@ -329,38 +329,24 @@ class OrgBudgetForm(forms.ModelForm):
     monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Budget Monthly Allowance", initial=Budget.DEF_MONTHLY_ALLOWANCE) 
     balance = DecimalField(max_digits=8, decimal_places=2, label="Budget Balance", initial=Budget.DEF_BALANCE)
 
-    allocated_max_allowance = DecimalField(max_digits=8, decimal_places=2, label="Allocated Max Allowance", initial=0.00)
-    allocated_monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Allocated Monthly Allowance", initial=0.00) 
-    allocated_balance = DecimalField(max_digits=8, decimal_places=2, label="Allocated Balance", initial=0.00)
-
-    unallocated_max_allowance = DecimalField(max_digits=8, decimal_places=2, label="Unallocated Max Allowance", initial=0.00)
-    unallocated_monthly_allowance = DecimalField(max_digits=8, decimal_places=2, label="Unallocated Monthly Allowance", initial=0.00) 
-    unallocated_balance = DecimalField(max_digits=8, decimal_places=2, label="Unallocated Balance", initial=0.00)
-
     def __init__(self, *args, **kwargs):
         self._org = kwargs.pop('org', None)
         super().__init__(*args, **kwargs)
-        self.fields['allocated_max_allowance'].widget.attrs['readonly'] = True
-        self.fields['allocated_monthly_allowance'].widget.attrs['readonly'] = True
-        self.fields['allocated_balance'].widget.attrs['readonly'] = True
-        self.fields['unallocated_max_allowance'].widget.attrs['readonly'] = True
-        self.fields['unallocated_monthly_allowance'].widget.attrs['readonly'] = True
-        self.fields['unallocated_balance'].widget.attrs['readonly'] = True
+        self.fields['balance'].widget.attrs['readonly'] = True
+        self.fields['max_allowance'].widget.attrs['readonly'] = True
+        self.fields['monthly_allowance'].widget.attrs['readonly'] = True
 
     class Meta:
         model = Budget
-        fields = ['balance', 'max_allowance', 'monthly_allowance', 'allocated_balance', 'allocated_max_allowance', 'allocated_monthly_allowance', 'unallocated_balance', 'unallocated_max_allowance', 'unallocated_monthly_allowance']
+        fields = ['balance', 'max_allowance', 'monthly_allowance']
 
     def add_to_field(self,field_name ,amount):
         self.fields[f'{field_name}'] += amount
-    def set_field(self,field_name ,amount):
-        self.fields[f'{field_name}'] = amount
 
     def save(self, commit=True):
-        instance = super().save(commit=False)
         instance.org = self._org
+        instance = super().save(commit=False)
         return instance
-
 
 class OrgCreateForm(ModelForm):
     budget_max_allowance = DecimalField(label="Budget Max Allowance", initial=Budget.DEF_MAX_ALLOWANCE)
