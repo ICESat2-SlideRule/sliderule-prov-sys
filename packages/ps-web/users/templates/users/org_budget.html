@@ -23,27 +23,39 @@
                                         <th>Balance</th>
                                         <th>Max Allowance</th>
                                         <th>Monthly Allowance</th>
+                                        <th>Forecast</th>
+                                        <th>History</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr class="bg-primary bg-opacity-10">
-                                        <th>Budget</th>
+                                        <th class="bg-white">Budget</th>
                                         <td>{{ orgBudgetForm.balance }}</td>
                                         <td>{{ orgBudgetForm.max_allowance }}</td>
                                         <td>{{ orgBudgetForm.monthly_allowance }}</td>
+                                        <td class="bg-white"></td>
+                                        <td class="bg-white"></td>
                                     </tr>
                                     <tr class="bg-light">
-                                        <th >Allocated</th>
+                                        <th class="bg-white">Allocated</th>
                                         <td>{{ orgBudgetForm.allocated_balance }}</td>
                                         <td>{{ orgBudgetForm.allocated_max_allowance }}</td>
                                         <td>{{ orgBudgetForm.allocated_monthly_allowance }}</td>
+                                        <td class="bg-white">
+                                            <a href="{% url 'org-account-forecast' orgAccountObj.id %}" class="btn btn-outline-primary">Forecast</a>
+                                        </td>
+                                        <td class="bg-white">
+                                            <a href="{% url 'org-account-history' orgAccountObj.id %}" class="btn btn-outline-primary">History</a>
+                                        </td>
                                     </tr>
                                     <tr class="bg-light">
-                                        <th>Unallocated</th>
+                                        <th class="bg-white">Unallocated</th>
                                         <td>{{ orgBudgetForm.unallocated_balance }}</td>
                                         <td>{{ orgBudgetForm.unallocated_max_allowance }}</td>
                                         <td>{{ orgBudgetForm.unallocated_monthly_allowance }}</td>
-                                    </tr>
+                                        <td class="bg-white"></td>
+                                        <td class="bg-white"></td>
+                                    </tr>                                    
                                 </tbody>
                             </table>
                             <div class="card shadow mx-auto d-block" style="max-width: fit-content;">
@@ -65,16 +77,17 @@
                                                     <th title = "Amount of allowance added to the balance every month">Monthly</th>
                                                     <th>Min Nodes</th>
                                                     <th>Max Nodes</th>
+                                                    <th>Forecast</th>
+                                                    <th>History</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {{ nodeGroupCreateFormSet.management_form }}
                                                 {% for form in nodeGroupCreateFormSet %}
-                                                <tr {% if forloop.last %}class="bg-primary bg-opacity-10"{% endif %}>
+                                                <tr {% if forloop.last %}class="bg-primary bg-opacity-10 border-top"{% endif %}>
                                                         {% if forloop.last %}
                                                             {# This will display the form.DELETE control but disable it for the last entry #}
                                                             <td class="bg-white">
-                                                                <input type="checkbox" name="{{ form.DELETE.name }}" id="{{ form.DELETE.id_for_label }}" disabled>
                                                             </td>
                                                         {% else %}
                                                             <td class="bg-primary bg-opacity-10">
@@ -82,13 +95,27 @@
                                                             </td>
                                                         {% endif %}
                                                                                                             
-                                                    <td>{{ form.name }}</td>
+                                                    <td>
+                                                        
+                                                        {{ form.name }}
+                                                    </td>
                                                     <td>{{ form.type }}</td>
                                                     <td>{{ form.budget_balance }}</td>
                                                     <td>{{ form.budget_max_allowance }}</td>
                                                     <td>{{ form.budget_monthly_allowance }}</td>
                                                     <td>{{ form.cfg_asg_min }}</td>
                                                     <td>{{ form.cfg_asg_max }}</td>
+                                                    {% if forloop.last %}
+                                                    <td class="bg-white"></td>
+                                                    <td class="bg-white"></td>
+                                                    {% else %}
+                                                        <td>
+                                                            <a href="{% url 'node-group-account-forecast' form.instance.id %}" class="btn btn-outline-primary">Forecast</a>
+                                                        </td>
+                                                        <td>
+                                                            <a href="{% url 'node-group-account-history' form.instance.id %}" class="btn btn-outline-primary">History</a>
+                                                        </td>
+                                                    {% endif %}
                                                 </tr>
                                                 {% endfor %}
                                             </tbody>
