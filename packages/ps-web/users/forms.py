@@ -125,21 +125,19 @@ class BudgetForm(forms.ModelForm):
         fields = ['max_allowance', 'monthly_allowance', 'balance']
 
 
-class NodeGroupTypeCreateForm(ModelForm):
+class NodeGroupTypeForm(ModelForm):
     '''
         For creating a new Node Group Type
     '''
     class Meta:
         model = NodeGroupType
-        fields = ['name', 'definition', 'description', 'node_mgnt_fixed_cost', 'per_node_cost_per_hr']
-        readonly = ['id']
+        fields = ['name', 'description', 'node_mgnt_fixed_cost', 'per_node_cost_per_hr']
 
-NodeGroupTypeCreateFormSet = modelformset_factory(
+NodeGroupTypeFormSet = modelformset_factory(
     model=NodeGroupType, 
-    form=NodeGroupTypeCreateForm, 
+    form=NodeGroupTypeForm, 
     extra=1, # You can adjust this number if you need to display more than one empty form for adding new NodeGroups
-    fields = ['name', 'definition', 'description', 'node_mgnt_fixed_cost', 'per_node_cost_per_hr'],
-
+    fields = [ 'name', 'description', 'node_mgnt_fixed_cost', 'per_node_cost_per_hr'],
     can_delete=True,  # If you want to allow deleting node groups through the formset
 )
 

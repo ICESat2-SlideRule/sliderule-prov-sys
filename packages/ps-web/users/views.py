@@ -20,7 +20,7 @@ from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.db.transaction import get_autocommit
 from .models import NodeGroup, NodeGroupType, GranChoice, OrgAccount, Cost, Membership, User, ClusterNumNode, PsCmdResult, OwnerPSCmd, Budget
-from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgCreateForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,OrgBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeCreateFormSet,ReadOnlyBudgetForm
+from .forms import MembershipForm, NodeGroupCfgForm, NodeGroupCreateForm, OrgCreateForm, OrgProfileForm, UserProfileForm,ClusterNumNodeForm,OrgBudgetForm,NodeGroupCreateFormSet,NodeGroupTypeFormSet,ReadOnlyBudgetForm
 from .utils import get_db_cluster_cost,add_obj_cost,add_node_group_cost
 from .tasks import get_versions, update_burn_rates, getGranChoice, sort_CNN_by_nn_exp,forever_loop_main_task,get_node_group_queue_name,remove_num_node_requests,get_PROVISIONING_DISABLED,set_PROVISIONING_DISABLED,process_num_nodes_api
 from django.core.mail import send_mail
@@ -95,34 +95,49 @@ def send_activation_email(request, orgname, user):
 @login_required(login_url='account_login')
 @verified_email_required
 @transaction.atomic
-def nodeGroupTypes(request):
+def nodeGroupTypes(request,pk):
+    LOG.info(f"{request.method}")
+    
     try:
         if request.method == "POST":
-            nodeGroupTypeCreateFormSet = NodeGroupTypeCreateFormSet(request.POST, queryset=NodeGroupType.objects.all())
-            if nodeGroupTypeCreateFormSet.is_valid():
-                lenOfForms = len(list(nodeGroupTypeCreateFormSet))
-                for form in nodeGroupTypeCreateFormSet:
+            #LOG.info(f"POST:{request.POST}")
+            nodeGroupTypeFormSet = NodeGroupTypeFormSet(request.POST, queryset=NodeGroupType.objects.all())
+            ng_set_valid = nodeGroupTypeFormSet.is_valid()
+            lenOfForms = len(list(nodeGroupTypeFormSet))
+            LOG.info(f"nodeGroupTypeFormSet.is_valid():{ng_set_valid} cnt:{lenOfForms}")
+            if ng_set_valid:
+                for form in nodeGroupTypeFormSet:
                     if form.has_changed() or lenOfForms == 1:
                         if form.cleaned_data.get('DELETE'):
                             form.instance.delete()
-                            LOG.info("form deleted")
+                            LOG.info(f"{form.instance.name} form deleted")
                         else:
                             form.save()
                             LOG.info("form saved")
-                        messages.success(request, "Node Group Types successfully updated")
+                        msg = f"{request.user.username} successfully updated Node Group Types for {form.instance.name}"
+                        LOG.info(f"{msg}")
+                        messages.success(request, f"{msg}")
                     else:
-                        LOG.info("form has not changed")
-                        messages.info(request, "Node Group Types NOT updated: no changes detected")
+                        msg = f"Nothing was changed on the form."
+                        LOG.info(f"{msg}")
+                        messages.warning(request, f"{msg}")
             else:
                 # Display specific errors from the formset
-                for form in nodeGroupTypeCreateFormSet:
+                emsg = ""
+                # for form in nodeGroupTypeFormSet:
+                #     for field in form:
+                #         LOG.info(f"field:{field}")
+                for form in nodeGroupTypeFormSet:
                     for field, errors in form.errors.items():
                         for error in errors:
-                            messages.error(request, f"Error in {field}: {error}")
-                messages.error(request, "Node Group Types NOT updated")
+                            emsg += f"{field}: {error} in {form.instance.name} id:<{form.instance.id}>"
+                f_emsg = f"Node Group Types NOT updated. Errors: {emsg}"
+                LOG.info(f"{f_emsg}")
+                messages.error(request, f"{f_emsg}")
+
         else:
-            nodeGroupTypeCreateFormSet = NodeGroupTypeCreateFormSet(queryset=NodeGroupType.objects.all())
-        context = {'nodeGroupTypeCreateFormSet': nodeGroupTypeCreateFormSet}
+            nodeGroupTypeFormSet = NodeGroupTypeFormSet(queryset=NodeGroupType.objects.all())
+        context = {'nodeGroupTypeFormSet': nodeGroupTypeFormSet, 'return_org_pk':pk}
         return render(request, 'users/node_group_types.html', context)
     except Exception as e:
         LOG.exception("Caught unexpected exception")
@@ -792,7 +807,7 @@ def nodeGroupCreate(request,pk=None):
             messages.warning(request, 'Insufficient privileges')
             if request.is_ajax():
                 return JsonResponse({'success': False, 'error': 'Insufficient privileges'})
-            return redirect('org-config')
+            return redirect('org-budget',pk=orgId)
         
         if request.method == 'POST':
             form = NodeGroupCreateForm(request.POST)
@@ -810,7 +825,7 @@ def nodeGroupCreate(request,pk=None):
                 messages.info(request, msg)
             if emsg:
                 messages.error(request, emsg)
-            return redirect('org-config')
+            return redirect('org-budget',pk=orgId)
         else:
             form = NodeGroupCreateForm()
             return render(request, 'users/node_group_create.html', {'form': form})

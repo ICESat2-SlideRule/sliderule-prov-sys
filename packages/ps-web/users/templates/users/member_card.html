@@ -12,7 +12,7 @@
             {% else %}
                 <div class="mm-btn-group my-4 mx-4">
                     {% if is_developer or user_is_owner_of_org  %}
-                        <a class="btn btn-outline-primary"  href="{% url 'org-config' membership.org.id %}">Configure</a> 
+                        <a class="btn btn-outline-primary"  href="{% url 'org-budget' membership.org.id %}">Configure</a> 
                     {% else %}
                         <a class="btn btn-outline-primary"  href="{% url 'cancel-membership' membership.id %}">Cancel Membership</a> 
                     {% endif %}

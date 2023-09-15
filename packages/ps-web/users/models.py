@@ -157,11 +157,7 @@ class NodeGroupType(models.Model):
     node_mgnt_fixed_cost = models.FloatField(editable=True,default=0.0,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for monitor and ilb")  # Overhead==> (monitor is c7g.large, ilb is c7g.large; .0725)
     per_node_cost_per_hr = models.FloatField(default=0.0,help_text="https://aws.amazon.com/ec2/pricing/on-demand/ for node")  # Per Node (r6g.xlarge = 0.226)
     name = models.CharField(max_length=128,
-                            default='EC2',
-                            blank=False,
-                            null=False)
-    definition = models.CharField(max_length=128,
-                            default='EC2-c7g.large-t4g.2xlarge',
+                            default='',# e.g. EC2-c7g.large-t4g.2xlarge
                             blank=False,
                             null=False)
     description = models.CharField(max_length=500,default="Add Description here...")    # like An EC2 instance using c7g.large for the ilb and monitor and t4g.2xlarge for the nodes
@@ -184,7 +180,10 @@ class NodeGroup(models.Model):
                             on_delete=models.CASCADE,
                             null=False,
                             blank=False)
-    type = models.ForeignKey(NodeGroupType, on_delete=models.CASCADE, related_name="node_groups", null=True)    
+    type = models.ForeignKey(NodeGroupType,
+                            on_delete=models.CASCADE,
+                            related_name="node_groups",
+                            null=True)    
     creation_date = models.DateTimeField(auto_now_add=True)
     modified_date = models.DateTimeField(auto_now=True)
     mgr_ip_address = models.GenericIPAddressField(default='0.0.0.0', editable=True)

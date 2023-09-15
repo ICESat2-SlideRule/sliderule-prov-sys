@@ -9,28 +9,29 @@
         <div class="col py-2 text-center"> 
             <div class="card shadow mx-auto d-block" style="max-width: fit-content;"> 
                 <div class="card-header text-center">
-                    <h2>Node Group Types</h2>
+                    <h2>Cluster Types</h2>
                 </div>
                 <div class="card-body">
                     <div class="auto-scroll-x-y">
                         <form class="form" action="" method="post">
                             {% csrf_token %}
-                            {{ nodeGroupTypeCreateFormSet.management_form|crispy }}
+                            {{ nodeGroupTypeFormSet.management_form|crispy }}
                             
                             <table class="table table-bordered">
                                 <thead class="thead-dark">
                                     <tr>
                                         <th>Delete</th>
                                         <th>Name</th>
-                                        <th>Definition</th>
                                         <th>Description</th>
                                         <th title="Fixed cost in dollars per hour">Fixed Cost</th>
-                                        <th title="Hourly cost per node instance">Per Node Cost</th>
+                                        <th title="Hourly cost per EC2 node instance or Fargate task">Unit Cost</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% for form in nodeGroupTypeCreateFormSet %}
+                                    {% for form in nodeGroupTypeFormSet %}
                                     <tr {% if forloop.last %}class="bg-primary bg-opacity-25"{% endif %}>
+                                        <!-- Add the hidden ID field here -->
+                                        {{ form.id }}
                                         <td>
                                             {% if forloop.last %}
                                                 {# This will display the form.DELETE control but disable it for the last entry #}
@@ -41,7 +42,6 @@
                                             {% endif %}
                                         </td>
                                         <td>{{ form.name }}</td>
-                                        <td>{{ form.definition }}</td>
                                         <td>{{ form.description }}</td>
                                         <td>{{ form.node_mgnt_fixed_cost }}</td>
                                         <td>{{ form.per_node_cost_per_hr }}</td>
@@ -55,7 +55,7 @@
                                     <a href="https://aws.amazon.com/fargate/pricing/" target="_blank" class="btn btn-outline-primary">AWS FARGATE pricing</a>
                                 </div>
                                 <div>
-                                    <button type="button" class="btn btn-secondary mx-2" onclick="history.back()">Back</button>
+                                    <a href="{% url 'org-budget' return_org_pk %}" class="btn btn-outline-secondary">Back</a>
                                     <button type="submit" class="btn btn-primary">Save Changes</button>
                                 </div>
                             </div>

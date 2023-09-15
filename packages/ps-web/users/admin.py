@@ -75,20 +75,20 @@ class OrgAccountAdmin(admin.ModelAdmin):
 
 @admin.register(NodeGroupType)
 class NodeGroupTypeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'definition', 'node_mgnt_fixed_cost','per_node_cost_per_hr','description')
-    list_filter = ('name', 'definition', 'node_mgnt_fixed_cost','per_node_cost_per_hr','description')
+    list_display = ('name', 'node_mgnt_fixed_cost','per_node_cost_per_hr','description')
+    list_filter = ('name', 'node_mgnt_fixed_cost','per_node_cost_per_hr','description')
 
 
 @admin.register(NodeGroup)
 class NodeGroupAdmin(admin.ModelAdmin):
-    list_display = ('name', 'org', 'creation_date', 'modified_date','cur_version',
+    list_display = ('name', 'org', 'type', 'creation_date', 'modified_date','cur_version',
                     'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state',
                     'allow_deploy_by_token',)
 
-    list_filter = ('name', 'org',  'creation_date', 'modified_date','cur_version',
+    list_filter = ('name', 'org', 'type',  'creation_date', 'modified_date','cur_version',
                    'active_ps_cmd', 'mgr_ip_address', 'is_deployed', 'deployed_state',
                     'allow_deploy_by_token',)
-    list_display_links = ['name','org']
+    list_display_links = ['name','org', 'type']
     readonly_fields = ['org']
 
 @admin.register(Cost)
