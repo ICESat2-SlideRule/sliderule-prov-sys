@@ -225,7 +225,7 @@ def get_ec2_client():
     if not hasattr(thread_local_storage, "ec2_client"):
         endpoint_url = os.environ.get("AWS_EC2_ENDPOINT_URL")
         aws_region = os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-        LOG.info(f"endpoint_url:{endpoint_url} aws_region:{aws_region}")
+        #LOG.info(f"endpoint_url:{endpoint_url} aws_region:{aws_region}")
         if endpoint_url is None or endpoint_url == "":
             ec2_client = boto3.client("ec2", region_name=aws_region)
         else:
@@ -877,7 +877,7 @@ class Account(ps_server_pb2_grpc.AccountServicer):
         #gran = ps_server_pb2.GRANULARITY.Name(currentCostReq.granularity)
         try:
             gran = currentCostReq.granularity
-            LOG.info("%s %s", currentCostReq.name, gran)
+            LOG.info(f"{currentCostReq.name} {gran}")
             et = pytz.utc.localize(datetime.strptime(currentCostReq.tm, FULL_FMT)) + timedelta(hours=1) 
             et.replace(minute=0, second=0, microsecond=0) #end of this hour
             if gran == "HOURLY":
@@ -919,7 +919,7 @@ class Account(ps_server_pb2_grpc.AccountServicer):
                 error_msg=emsg)            
 
     def TodaysCost(self, todaysCostReq, context):  ## This is called by GRPC framework
-        LOG.info("%s cluster", todaysCostReq.name)
+        LOG.info(f"{todaysCostReq.name}")
         try:
             tm = pytz.utc.localize(datetime.strptime(todaysCostReq.tm, FULL_FMT))
             # st truncate to start of the day et extrapolate to beginning of this hour
@@ -945,7 +945,7 @@ class Account(ps_server_pb2_grpc.AccountServicer):
     ## This is called by GRPC framework
     def DailyHistCost(self, dailyHistCost, context):
         try:
-            LOG.info("%s cluster", dailyHistCost.name)
+            LOG.info(f"{dailyHistCost.name}")
             # truncate to start of day for time passed as st
             st = datetime.strptime(dailyHistCost.start_tm, FULL_FMT).replace(
                 hour=0, minute=0, second=0, microsecond=0, tzinfo=pytz.utc
@@ -971,7 +971,7 @@ class Account(ps_server_pb2_grpc.AccountServicer):
                 error_msg=emsg)            
 
     def NumNodes(self,numNodesReq, context):
-        #LOG.info("%s %s %s",numNodesReq.region,numNodesReq.name,numNodesReq.version)
+        LOG.info(f"{numNodesReq.region} {numNodesReq.name} {numNodesReq.version}")
         num_nodes = get_num_nodes(numNodesReq.region,numNodesReq.name,numNodesReq.version)
         return ps_server_pb2.NumNodesRsp(name = numNodesReq.name,version=numNodesReq.version,region=numNodesReq.region,num_nodes = num_nodes)
 
@@ -1665,6 +1665,7 @@ class Control(ps_server_pb2_grpc.ControlServicer):
         else:
             versions = get_versions_for_org(get_s3_client(),request.name)
         sorted_versions = sort_versions(versions)
+        LOG.info(f'GetVersions {request.name} returning:{sorted_versions}')
         return ps_server_pb2.GetVersionsRsp(versions=sorted_versions)
 
     def GetCurrentSetUpCfg(self,request,context):
@@ -1672,6 +1673,7 @@ class Control(ps_server_pb2_grpc.ControlServicer):
         This is the version of terraform files setup for the Org's cluster
         '''
         setup_cfg = read_SetUpCfg(request.name)
+        LOG.info(f'GetCurrentSetUpCfg {request.name} returning:{setup_cfg}')
         return ps_server_pb2.GetCurrentSetUpCfgRsp(setup_cfg=setup_cfg)
 
     # these are the pkg versions obtained from the container
@@ -1681,7 +1683,7 @@ class Control(ps_server_pb2_grpc.ControlServicer):
         return ps_server_pb2.GetPSVersionsRsp(ps_versions=ps_server_versions)
 
     def Update(self, request, context):  ## This is called by GRPC framework
-        LOG.info(f'Update domain:{get_domain_env()} TERRAFORM_CLI:{get_terraform_cli()}')
+        LOG.info(f'Update {request.name} {request.min_nodes}-{request.num_nodes}-{request.max_nodes} domain:{get_domain_env()} TERRAFORM_CLI:{get_terraform_cli()}')
         s3_client = get_s3_client()
         yield from self.process_Update_cmd(request,s3_client)
 
