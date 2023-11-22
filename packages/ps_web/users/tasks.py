@@ -1317,7 +1317,6 @@ def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cm
                         LOG.error(error_msg)
                         psCmdResultObj.error = error_msg
                         psCmdResultObj.save()
-                        raise ProvisionCmdError(f"{error_msg}")
                     if rrsp.done:
                         LOG.info(f"{org_cmd_str} iter:<{iterations}>  got rrsp done from ps_server!")
             except StopIteration:
@@ -1326,9 +1325,11 @@ def process_rsp_generator(orgAccountObj, ps_cmd, rsp_gen, psCmdResultObj, org_cm
                     LOG.info(f"{org_cmd_str} iter:<{iterations}> incrementing num_ps_cmd_successful")
                     orgAccountObj.num_ps_cmd_successful += 1
                     orgAccountObj.save(update_fields=['num_ps_cmd_successful'])
-                psCmdResultObj.error = ''
-                psCmdResultObj.save(update_fields=['error'])
+                    psCmdResultObj.error = ''
+                    psCmdResultObj.save(update_fields=['error'])
                 LOG.info(f"{org_cmd_str} iter:<{iterations}> got expected StopIteration exception")
+        if got_ps_server_error:
+            raise ProvisionCmdError(f"{error_msg}")
     except ProvisionCmdError as e:
         error_msg = f"{org_cmd_str} iter:<{iterations}> caught ProvisionCmdError exception: "
         LOG.exception(error_msg)
